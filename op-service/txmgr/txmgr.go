@@ -660,9 +660,11 @@ func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transa
 		// original tx can get included in a block just before the above call. In this case the
 		// error is due to the tx reverting with message "block number must be equal to next
 		// expected block number"
-		m.l.Warn("failed to re-estimate gas", "err", err, "tx", tx.Hash(), "gaslimit", tx.Gas(),
+		m.l.Debug("failed to re-estimate gas", "err", err, "tx", tx.Hash(), "gaslimit", tx.Gas(),
 			"gasFeeCap", bumpedFee, "gasTipCap", bumpedTip)
-		return nil, err
+		// CHANGE(taiko): If we can't estimate gas (mainly for blob transactions),
+		// we should just use the gas limit from the original transaction.
+		gas = tx.Gas()
 	}
 	if tx.Gas() != gas {
 		// non-determinism in gas limit estimation happens regularly due to underlying state
