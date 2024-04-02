@@ -413,9 +413,6 @@ func (m Config) Check() error {
 	if m.Backend == nil {
 		return errors.New("must provide the Backend")
 	}
-	if m.NumConfirmations == 0 {
-		return errors.New("NumConfirmations must not be 0")
-	}
 	if m.NetworkTimeout == 0 {
 		return errors.New("must provide NetworkTimeout")
 	}
