@@ -665,6 +665,12 @@ func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transa
 		// we should just use the gas limit from the original transaction.
 		gas = tx.Gas()
 	}
+
+	// If gas is less than the last gas, then use the last.
+	if gas < tx.Gas() {
+		gas = tx.Gas()
+	}
+
 	if tx.Gas() != gas {
 		// non-determinism in gas limit estimation happens regularly due to underlying state
 		// changes across calls, and is even more common now that geth uses an in-exact estimation
