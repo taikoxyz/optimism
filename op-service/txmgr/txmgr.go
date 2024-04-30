@@ -241,7 +241,7 @@ func (m *SimpleTxManager) send(ctx context.Context, candidate TxCandidate) (*typ
 	if err != nil {
 		return nil, fmt.Errorf("failed to create the tx: %w", err)
 	}
-	return m.sendTx(ctx, tx)
+	return m.sendTx(ctx, tx, &candidate)
 }
 
 // craftTx creates the signed transaction
@@ -396,7 +396,7 @@ func (m *SimpleTxManager) resetNonce() {
 
 // send submits the same transaction several times with increasing gas prices as necessary.
 // It waits for the transaction to be confirmed on chain.
-func (m *SimpleTxManager) sendTx(ctx context.Context, tx *types.Transaction) (*types.Receipt, error) {
+func (m *SimpleTxManager) sendTx(ctx context.Context, tx *types.Transaction, candidate *TxCandidate) (*types.Receipt, error) {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	ctx, cancel := context.WithCancel(ctx)
@@ -406,7 +406,7 @@ func (m *SimpleTxManager) sendTx(ctx context.Context, tx *types.Transaction) (*t
 	receiptChan := make(chan *types.Receipt, 1)
 	publishAndWait := func(tx *types.Transaction, bumpFees bool) *types.Transaction {
 		wg.Add(1)
-		tx, published := m.publishTx(ctx, tx, sendState, bumpFees)
+		tx, published := m.publishTx(ctx, tx, sendState, bumpFees, candidate)
 		if published {
 			go func() {
 				defer wg.Done()
@@ -456,7 +456,7 @@ func (m *SimpleTxManager) sendTx(ctx context.Context, tx *types.Transaction) (*t
 // publishTx publishes the transaction to the transaction pool. If it receives any underpriced errors
 // it will bump the fees and retry.
 // Returns the latest fee bumped tx, and a boolean indicating whether the tx was sent or not
-func (m *SimpleTxManager) publishTx(ctx context.Context, tx *types.Transaction, sendState *SendState, bumpFeesImmediately bool) (*types.Transaction, bool) {
+func (m *SimpleTxManager) publishTx(ctx context.Context, tx *types.Transaction, sendState *SendState, bumpFeesImmediately bool, candidate *TxCandidate) (*types.Transaction, bool) {
 	l := m.txLogger(tx, true)
 
 	l.Info("Publishing transaction")
@@ -468,7 +468,7 @@ func (m *SimpleTxManager) publishTx(ctx context.Context, tx *types.Transaction, 
 			return tx, false
 		}
 		if bumpFeesImmediately {
-			newTx, err := m.increaseGasPrice(ctx, tx)
+			newTx, err := m.increaseGasPrice(ctx, tx, candidate)
 			if err != nil {
 				l.Error("unable to increase gas", "err", err)
 				m.metr.TxPublished("bump_failed")
@@ -632,7 +632,7 @@ func (m *SimpleTxManager) queryReceipt(ctx context.Context, txHash common.Hash, 
 // higher fees that should satisfy geth's tx replacement rules. It also computes an updated gas
 // limit estimate. To avoid runaway price increases, fees are capped at a `feeLimitMultiplier`
 // multiple of the suggested values.
-func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transaction) (*types.Transaction, error) {
+func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transaction, candidate *TxCandidate) (*types.Transaction, error) {
 	m.txLogger(tx, true).Info("bumping gas price for transaction")
 	tip, baseFee, blobBaseFee, err := m.suggestGasPriceCaps(ctx)
 	if err != nil {
@@ -665,6 +665,12 @@ func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transa
 		// we should just use the gas limit from the original transaction.
 		gas = tx.Gas()
 	}
+
+	// If the estimate gas less than specified gasLimit then use the specified gasLimit.
+	if candidate != nil && gas < candidate.GasLimit {
+		gas = candidate.GasLimit
+	}
+
 	if tx.Gas() != gas {
 		// non-determinism in gas limit estimation happens regularly due to underlying state
 		// changes across calls, and is even more common now that geth uses an in-exact estimation

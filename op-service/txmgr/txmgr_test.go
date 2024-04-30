@@ -359,7 +359,7 @@ func TestTxMgrConfirmAtMinGasPrice(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	receipt, err := h.mgr.sendTx(ctx, tx)
+	receipt, err := h.mgr.sendTx(ctx, tx, nil)
 	require.Nil(t, err)
 	require.NotNil(t, receipt)
 	require.Equal(t, gasPricer.expGasFeeCap().Uint64(), receipt.GasUsed)
@@ -387,7 +387,7 @@ func TestTxMgrNeverConfirmCancel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	receipt, err := h.mgr.sendTx(ctx, tx)
+	receipt, err := h.mgr.sendTx(ctx, tx, nil)
 	require.Equal(t, err, context.DeadlineExceeded)
 	require.Nil(t, receipt)
 }
@@ -433,7 +433,7 @@ func TestTxMgrConfirmsAtHigherGasPrice(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	receipt, err := h.mgr.sendTx(ctx, tx)
+	receipt, err := h.mgr.sendTx(ctx, tx, nil)
 	require.Nil(t, err)
 	require.NotNil(t, receipt)
 	require.Equal(t, h.gasPricer.expGasFeeCap().Uint64(), receipt.GasUsed)
@@ -467,7 +467,7 @@ func TestTxMgrConfirmsBlobTxAtHigherGasPrice(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	receipt, err := h.mgr.sendTx(ctx, tx)
+	receipt, err := h.mgr.sendTx(ctx, tx, nil)
 	require.Nil(t, err)
 	require.NotNil(t, receipt)
 	// the fee cap for the blob tx at epoch == 3 should end up higher than the min required gas
@@ -501,7 +501,7 @@ func TestTxMgrBlocksOnFailingRpcCalls(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	receipt, err := h.mgr.sendTx(ctx, tx)
+	receipt, err := h.mgr.sendTx(ctx, tx, nil)
 	require.Equal(t, err, context.DeadlineExceeded)
 	require.Nil(t, receipt)
 }
@@ -685,7 +685,7 @@ func TestTxMgrOnlyOnePublicationSucceeds(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	receipt, err := h.mgr.sendTx(ctx, tx)
+	receipt, err := h.mgr.sendTx(ctx, tx, nil)
 	require.Nil(t, err)
 
 	require.NotNil(t, receipt)
@@ -720,7 +720,7 @@ func TestTxMgrConfirmsMinGasPriceAfterBumping(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	receipt, err := h.mgr.sendTx(ctx, tx)
+	receipt, err := h.mgr.sendTx(ctx, tx, nil)
 	require.Nil(t, err)
 	require.NotNil(t, receipt)
 	require.Equal(t, h.gasPricer.expGasFeeCap().Uint64(), receipt.GasUsed)
@@ -765,7 +765,7 @@ func TestTxMgrDoesntAbortNonceTooLowAfterMiningTx(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	receipt, err := h.mgr.sendTx(ctx, tx)
+	receipt, err := h.mgr.sendTx(ctx, tx, nil)
 	require.Nil(t, err)
 	require.NotNil(t, receipt)
 	require.Equal(t, h.gasPricer.expGasFeeCap().Uint64(), receipt.GasUsed)
@@ -1003,7 +1003,7 @@ func doGasPriceIncrease(t *testing.T, txTipCap, txFeeCap, newTip, newBaseFee int
 		GasTipCap: big.NewInt(txTipCap),
 		GasFeeCap: big.NewInt(txFeeCap),
 	})
-	newTx, err := mgr.increaseGasPrice(context.Background(), tx)
+	newTx, err := mgr.increaseGasPrice(context.Background(), tx, nil)
 	return tx, newTx, err
 }
 
@@ -1180,7 +1180,7 @@ func testIncreaseGasPriceLimit(t *testing.T, lt gasPriceLimitTest) {
 	var err error
 	for {
 		var tmpTx *types.Transaction
-		tmpTx, err = mgr.increaseGasPrice(ctx, lastGoodTx)
+		tmpTx, err = mgr.increaseGasPrice(ctx, lastGoodTx, nil)
 		if err != nil {
 			break
 		}
@@ -1202,7 +1202,7 @@ func testIncreaseGasPriceLimit(t *testing.T, lt gasPriceLimitTest) {
 	lastGoodTx = types.NewTx(blobTx)
 	for {
 		var tmpTx *types.Transaction
-		tmpTx, err = mgr.increaseGasPrice(ctx, lastGoodTx)
+		tmpTx, err = mgr.increaseGasPrice(ctx, lastGoodTx, nil)
 		if err != nil {
 			break
 		}
