@@ -2,6 +2,7 @@ package txmgr
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math/big"
@@ -263,15 +264,29 @@ func (m *SimpleTxManager) craftTx(ctx context.Context, candidate TxCandidate) (*
 
 	// If the gas limit is set, we can use that as the gas
 	if gasLimit == 0 {
-		// Calculate the intrinsic gas for the transaction
-		gas, err := m.backend.EstimateGas(ctx, ethereum.CallMsg{
+		callArgs := ethereum.CallMsg{
 			From:      m.cfg.From,
 			To:        candidate.To,
 			GasTipCap: gasTipCap,
 			GasFeeCap: gasFeeCap,
 			Data:      candidate.TxData,
 			Value:     candidate.Value,
-		})
+		}
+
+		for _, blob := range candidate.Blobs {
+			commitment, err := blob.ComputeKZGCommitment()
+			if err != nil {
+				return nil, err
+			}
+
+			callArgs.BlobHashes = append(callArgs.BlobHashes, kzg4844.CalcBlobHashV1(
+				sha256.New(),
+				&commitment,
+			))
+		}
+
+		// Calculate the intrinsic gas for the transaction
+		gas, err := m.backend.EstimateGas(ctx, callArgs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to estimate gas: %w", errutil.TryAddRevertReason(err))
 		}
@@ -646,25 +661,31 @@ func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transa
 		return nil, err
 	}
 
-	// Re-estimate gaslimit in case things have changed or a previous gaslimit estimate was wrong
-	gas, err := m.backend.EstimateGas(ctx, ethereum.CallMsg{
+	callArgs := ethereum.CallMsg{
 		From:      m.cfg.From,
 		To:        tx.To(),
 		GasTipCap: bumpedTip,
 		GasFeeCap: bumpedFee,
 		Data:      tx.Data(),
 		Value:     tx.Value(),
-	})
+	}
+
+	if tx.Type() == types.BlobTxType {
+		callArgs.BlobHashes = append(callArgs.BlobHashes, tx.BlobHashes()...)
+	}
+
+	// Re-estimate gaslimit in case things have changed or a previous gaslimit estimate was wrong
+	gas, err := m.backend.EstimateGas(ctx, callArgs)
 	if err != nil {
 		// If this is a transaction resubmission, we sometimes see this outcome because the
 		// original tx can get included in a block just before the above call. In this case the
 		// error is due to the tx reverting with message "block number must be equal to next
 		// expected block number"
-		m.l.Debug("failed to re-estimate gas", "err", err, "tx", tx.Hash(), "gaslimit", tx.Gas(),
+		m.l.Warn("failed to re-estimate gas", "err", err, "tx", tx.Hash(), "gaslimit", tx.Gas(),
 			"gasFeeCap", bumpedFee, "gasTipCap", bumpedTip)
 		// CHANGE(taiko): If we can't estimate gas (mainly for blob transactions),
 		// we should just use the gas limit from the original transaction.
-		gas = tx.Gas()
+		return nil, err
 	}
 	if tx.Gas() != gas {
 		// non-determinism in gas limit estimation happens regularly due to underlying state
