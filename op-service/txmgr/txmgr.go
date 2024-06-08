@@ -694,6 +694,8 @@ func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transa
 			"gasFeeCap", bumpedFee, "gasTipCap", bumpedTip)
 	}
 
+	gas = tx.Gas() // CHANGE(taiko): use the original gas limit, since we always use the hardcoded gas limit.
+
 	var newTx *types.Transaction
 	if tx.Type() == types.BlobTxType {
 		// Blob transactions have an additional blob gas price we must specify, so we must make sure it is
