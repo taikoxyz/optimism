@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ethereum-optimism/optimism/op-service/errutil"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
@@ -287,7 +288,7 @@ func (m *SimpleTxManager) craftTx(ctx context.Context, candidate TxCandidate) (*
 		// Calculate the intrinsic gas for the transaction
 		gas, err := m.backend.EstimateGas(ctx, callArgs)
 		if err != nil {
-			return nil, fmt.Errorf("failed to estimate gas: %w", err)
+			return nil, fmt.Errorf("failed to estimate gas: %w", errutil.TryAddRevertReason(err))
 		}
 		gasLimit = gas
 	}
@@ -474,7 +475,7 @@ func (m *SimpleTxManager) sendTx(ctx context.Context, tx *types.Transaction) (*t
 func (m *SimpleTxManager) publishTx(ctx context.Context, tx *types.Transaction, sendState *SendState, bumpFeesImmediately bool) (*types.Transaction, bool) {
 	l := m.txLogger(tx, true)
 
-	l.Info("Publishing transaction")
+	l.Info("Publishing transaction", "tx", tx.Hash())
 
 	for {
 		// if the tx manager closed, give up without bumping fees or retrying
@@ -508,7 +509,7 @@ func (m *SimpleTxManager) publishTx(ctx context.Context, tx *types.Transaction, 
 
 		if err == nil {
 			m.metr.TxPublished("")
-			l.Info("Transaction successfully published")
+			l.Info("Transaction successfully published", "tx", tx.Hash())
 			return tx, true
 		}
 

@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"io"
+	"time"
 
 	"github.com/ethereum-optimism/optimism/op-service/httputil"
 	"github.com/ethereum-optimism/optimism/op-service/sources/caching"
@@ -36,8 +37,8 @@ type Metricer interface {
 
 	RecordGameStep()
 	RecordGameMove()
-	RecordCannonExecutionTime(t float64)
-	RecordAsteriscExecutionTime(t float64)
+	RecordGameL2Challenge()
+	RecordVmExecutionTime(vmType string, t time.Duration)
 	RecordClaimResolutionTime(t float64)
 	RecordGameActTime(t float64)
 
@@ -83,13 +84,13 @@ type Metrics struct {
 
 	highestActedL1Block prometheus.Gauge
 
-	moves prometheus.Counter
-	steps prometheus.Counter
+	moves        prometheus.Counter
+	steps        prometheus.Counter
+	l2Challenges prometheus.Counter
 
-	claimResolutionTime   prometheus.Histogram
-	gameActTime           prometheus.Histogram
-	cannonExecutionTime   prometheus.Histogram
-	asteriscExecutionTime prometheus.Histogram
+	claimResolutionTime prometheus.Histogram
+	gameActTime         prometheus.Histogram
+	vmExecutionTime     *prometheus.HistogramVec
 
 	trackedGames  prometheus.GaugeVec
 	inflightGames prometheus.Gauge
@@ -145,13 +146,10 @@ func NewMetrics() *Metrics {
 			Name:      "steps",
 			Help:      "Number of game steps made by the challenge agent",
 		}),
-		cannonExecutionTime: factory.NewHistogram(prometheus.HistogramOpts{
+		l2Challenges: factory.NewCounter(prometheus.CounterOpts{
 			Namespace: Namespace,
-			Name:      "cannon_execution_time",
-			Help:      "Time (in seconds) to execute cannon",
-			Buckets: append(
-				[]float64{1.0, 10.0},
-				prometheus.ExponentialBuckets(30.0, 2.0, 14)...),
+			Name:      "l2_challenges",
+			Help:      "Number of L2 challenges made by the challenge agent",
 		}),
 		claimResolutionTime: factory.NewHistogram(prometheus.HistogramOpts{
 			Namespace: Namespace,
@@ -167,14 +165,14 @@ func NewMetrics() *Metrics {
 				[]float64{1.0, 2.0, 5.0, 10.0},
 				prometheus.ExponentialBuckets(30.0, 2.0, 14)...),
 		}),
-		asteriscExecutionTime: factory.NewHistogram(prometheus.HistogramOpts{
+		vmExecutionTime: factory.NewHistogramVec(prometheus.HistogramOpts{
 			Namespace: Namespace,
 			Name:      "asterisc_execution_time",
 			Help:      "Time (in seconds) to execute asterisc",
 			Buckets: append(
 				[]float64{1.0, 10.0},
 				prometheus.ExponentialBuckets(30.0, 2.0, 14)...),
-		}),
+		}, []string{"vm"}),
 		bondClaimFailures: factory.NewCounter(prometheus.CounterOpts{
 			Namespace: Namespace,
 			Name:      "claim_failures",
@@ -251,6 +249,10 @@ func (m *Metrics) RecordGameStep() {
 	m.steps.Add(1)
 }
 
+func (m *Metrics) RecordGameL2Challenge() {
+	m.l2Challenges.Add(1)
+}
+
 func (m *Metrics) RecordPreimageChallenged() {
 	m.preimageChallenged.Add(1)
 }
@@ -267,12 +269,8 @@ func (m *Metrics) RecordBondClaimed(amount uint64) {
 	m.bondsClaimed.Add(float64(amount))
 }
 
-func (m *Metrics) RecordCannonExecutionTime(t float64) {
-	m.cannonExecutionTime.Observe(t)
-}
-
-func (m *Metrics) RecordAsteriscExecutionTime(t float64) {
-	m.asteriscExecutionTime.Observe(t)
+func (m *Metrics) RecordVmExecutionTime(vmType string, dur time.Duration) {
+	m.vmExecutionTime.WithLabelValues(vmType).Observe(dur.Seconds())
 }
 
 func (m *Metrics) RecordClaimResolutionTime(t float64) {

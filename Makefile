@@ -21,7 +21,6 @@ build-ts: submodules
 		. $$NVM_DIR/nvm.sh && nvm use; \
 	fi
 	pnpm install:ci
-	pnpm prepare
 	pnpm build
 .PHONY: build-ts
 
@@ -159,7 +158,6 @@ mod-tidy:
 	#
 	# See https://proxy.golang.org/ for more info.
 	export GOPRIVATE="github.com/ethereum-optimism" && go mod tidy
-	make -C ./op-ufm mod-tidy
 .PHONY: mod-tidy
 
 clean:
@@ -216,11 +214,6 @@ test-unit:
 	make -C ./op-e2e test
 	pnpm test
 .PHONY: test-unit
-
-test-integration:
-	bash ./ops-bedrock/test-integration.sh \
-		./packages/contracts-bedrock/deployments/devnetL1
-.PHONY: test-integration
 
 # Remove the baseline-commit to generate a base reading & show all issues
 semgrep:

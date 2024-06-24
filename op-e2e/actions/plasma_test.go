@@ -5,21 +5,24 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/log"
+
 	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils"
 	"github.com/ethereum-optimism/optimism/op-node/node/safedb"
+	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/sync"
 	plasma "github.com/ethereum-optimism/optimism/op-plasma"
 	"github.com/ethereum-optimism/optimism/op-plasma/bindings"
 	"github.com/ethereum-optimism/optimism/op-service/sources"
 	"github.com/ethereum-optimism/optimism/op-service/testlog"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/log"
-	"github.com/stretchr/testify/require"
 )
 
-// Devnet allocs should have plasma mode enabled for these tests to pass
+// Devnet allocs should have alt-da mode enabled for these tests to pass
 
 // L2PlasmaDA is a test harness for manipulating plasma DA state.
 type L2PlasmaDA struct {
@@ -58,7 +61,7 @@ func NewL2PlasmaDA(t Testing, params ...PlasmaParam) *L2PlasmaDA {
 	dp := e2eutils.MakeDeployParams(t, p)
 	sd := e2eutils.Setup(t, dp, defaultAlloc)
 
-	require.True(t, sd.RollupCfg.UsePlasma)
+	require.True(t, sd.RollupCfg.PlasmaEnabled())
 
 	miner := NewL1Miner(t, log, sd.L1Cfg)
 	l1Client := miner.EthClient()
@@ -72,7 +75,7 @@ func NewL2PlasmaDA(t Testing, params ...PlasmaParam) *L2PlasmaDA {
 	l1F, err := sources.NewL1Client(miner.RPCClient(), log, nil, sources.L1ClientDefaultConfig(sd.RollupCfg, false, sources.RPCKindBasic))
 	require.NoError(t, err)
 
-	plasmaCfg, err := sd.RollupCfg.PlasmaConfig()
+	plasmaCfg, err := sd.RollupCfg.GetOPPlasmaConfig()
 	require.NoError(t, err)
 
 	daMgr := plasma.NewPlasmaDAWithStorage(log, plasmaCfg, storage, &plasma.NoopMetrics{})
@@ -94,7 +97,7 @@ func NewL2PlasmaDA(t Testing, params ...PlasmaParam) *L2PlasmaDA {
 	alice := NewCrossLayerUser(log, dp.Secrets.Alice, rand.New(rand.NewSource(0xa57b)))
 	alice.L2.SetUserEnv(l2UserEnv)
 
-	contract, err := bindings.NewDataAvailabilityChallenge(sd.RollupCfg.DAChallengeAddress, l1Client)
+	contract, err := bindings.NewDataAvailabilityChallenge(sd.RollupCfg.PlasmaConfig.DAChallengeAddress, l1Client)
 	require.NoError(t, err)
 
 	challengeWindow, err := contract.ChallengeWindow(nil)
@@ -227,7 +230,7 @@ func (a *L2PlasmaDA) ActResolveInput(t Testing, comm []byte, input []byte, bn ui
 
 func (a *L2PlasmaDA) ActResolveLastChallenge(t Testing) {
 	// remove derivation byte prefix
-	input, err := a.storage.GetInput(t.Ctx(), a.lastComm[1:])
+	input, err := a.storage.GetInput(t.Ctx(), plasma.Keccak256Commitment(a.lastComm[1:]))
 	require.NoError(t, err)
 
 	a.ActResolveInput(t, a.lastComm, input, a.lastCommBn)
@@ -458,7 +461,7 @@ func TestPlasma_SequencerStalledMultiChallenges(gt *testing.T) {
 
 	// keep track of the related commitment
 	comm1 := a.lastComm
-	input1, err := a.storage.GetInput(t.Ctx(), comm1[1:])
+	input1, err := a.storage.GetInput(t.Ctx(), plasma.Keccak256Commitment(comm1[1:]))
 	bn1 := a.lastCommBn
 	require.NoError(t, err)
 
@@ -497,13 +500,17 @@ func TestPlasma_SequencerStalledMultiChallenges(gt *testing.T) {
 
 	// advance the pipeline until it errors out as it is still stuck
 	// on deriving the first commitment
-	for i := 0; i < 3; i++ {
-		a.sequencer.ActL2PipelineStep(t)
-	}
+	a.sequencer.ActL2EventsUntil(t, func(ev rollup.Event) bool {
+		x, ok := ev.(rollup.EngineTemporaryErrorEvent)
+		if ok {
+			require.ErrorContains(t, x.Err, "failed to fetch input data")
+		}
+		return ok
+	}, 100, false)
 
 	// keep track of the second commitment
 	comm2 := a.lastComm
-	_, err = a.storage.GetInput(t.Ctx(), comm2[1:])
+	_, err = a.storage.GetInput(t.Ctx(), plasma.Keccak256Commitment(comm2[1:]))
 	require.NoError(t, err)
 	a.lastCommBn = a.miner.l1Chain.CurrentBlock().Number.Uint64()
 

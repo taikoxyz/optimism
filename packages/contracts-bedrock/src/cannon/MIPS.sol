@@ -4,6 +4,8 @@ pragma solidity 0.8.15;
 import { ISemver } from "src/universal/ISemver.sol";
 import { IPreimageOracle } from "./interfaces/IPreimageOracle.sol";
 import { PreimageKeyLib } from "./PreimageKeyLib.sol";
+import { MIPSInstructions as ins } from "src/cannon/libraries/MIPSInstructions.sol";
+import { MIPSState as st } from "src/cannon/libraries/MIPSState.sol";
 
 /// @title MIPS
 /// @notice The MIPS contract emulates a single MIPS instruction.
@@ -43,8 +45,8 @@ contract MIPS is ISemver {
     uint32 public constant BRK_START = 0x40000000;
 
     /// @notice The semantic version of the MIPS contract.
-    /// @custom:semver 1.0.0
-    string public constant version = "1.0.0";
+    /// @custom:semver 1.0.1
+    string public constant version = "1.1.0-beta.3";
 
     uint32 internal constant FD_STDIN = 0;
     uint32 internal constant FD_STDOUT = 1;
@@ -69,16 +71,6 @@ contract MIPS is ISemver {
     /// @return oracle_ The IPreimageOracle contract.
     function oracle() external view returns (IPreimageOracle oracle_) {
         oracle_ = ORACLE;
-    }
-
-    /// @notice Extends the value leftwards with its most significant bit (sign extension).
-    function SE(uint32 _dat, uint32 _idx) internal pure returns (uint32 out_) {
-        unchecked {
-            bool isSigned = (_dat >> (_idx - 1)) != 0;
-            uint256 signed = ((1 << (32 - _idx)) - 1) << _idx;
-            uint256 mask = (1 << _idx) - 1;
-            return uint32(_dat & mask | (isSigned ? signed : 0));
-        }
     }
 
     /// @notice Computes the hash of the MIPS state.
@@ -310,204 +302,6 @@ contract MIPS is ISemver {
         }
     }
 
-    /// @notice Handles a branch instruction, updating the MIPS state PC where needed.
-    /// @param _opcode The opcode of the branch instruction.
-    /// @param _insn The instruction to be executed.
-    /// @param _rtReg The register to be used for the branch.
-    /// @param _rs The register to be compared with the branch register.
-    /// @return out_ The hashed MIPS state.
-    function handleBranch(uint32 _opcode, uint32 _insn, uint32 _rtReg, uint32 _rs) internal returns (bytes32 out_) {
-        unchecked {
-            // Load state from memory
-            State memory state;
-            assembly {
-                state := 0x80
-            }
-
-            bool shouldBranch = false;
-
-            if (state.nextPC != state.pc + 4) {
-                revert("branch in delay slot");
-            }
-
-            // beq/bne: Branch on equal / not equal
-            if (_opcode == 4 || _opcode == 5) {
-                uint32 rt = state.registers[_rtReg];
-                shouldBranch = (_rs == rt && _opcode == 4) || (_rs != rt && _opcode == 5);
-            }
-            // blez: Branches if instruction is less than or equal to zero
-            else if (_opcode == 6) {
-                shouldBranch = int32(_rs) <= 0;
-            }
-            // bgtz: Branches if instruction is greater than zero
-            else if (_opcode == 7) {
-                shouldBranch = int32(_rs) > 0;
-            }
-            // bltz/bgez: Branch on less than zero / greater than or equal to zero
-            else if (_opcode == 1) {
-                // regimm
-                uint32 rtv = ((_insn >> 16) & 0x1F);
-                if (rtv == 0) {
-                    shouldBranch = int32(_rs) < 0;
-                }
-                if (rtv == 1) {
-                    shouldBranch = int32(_rs) >= 0;
-                }
-            }
-
-            // Update the state's previous PC
-            uint32 prevPC = state.pc;
-
-            // Execute the delay slot first
-            state.pc = state.nextPC;
-
-            // If we should branch, update the PC to the branch target
-            // Otherwise, proceed to the next instruction
-            if (shouldBranch) {
-                state.nextPC = prevPC + 4 + (SE(_insn & 0xFFFF, 16) << 2);
-            } else {
-                state.nextPC = state.nextPC + 4;
-            }
-
-            // Return the hash of the resulting state
-            out_ = outputState();
-        }
-    }
-
-    /// @notice Handles HI and LO register instructions.
-    /// @param _func The function code of the instruction.
-    /// @param _rs The value of the RS register.
-    /// @param _rt The value of the RT register.
-    /// @param _storeReg The register to store the result in.
-    /// @return out_ The hashed MIPS state.
-    function handleHiLo(uint32 _func, uint32 _rs, uint32 _rt, uint32 _storeReg) internal returns (bytes32 out_) {
-        unchecked {
-            // Load state from memory
-            State memory state;
-            assembly {
-                state := 0x80
-            }
-
-            uint32 val;
-
-            // mfhi: Move the contents of the HI register into the destination
-            if (_func == 0x10) {
-                val = state.hi;
-            }
-            // mthi: Move the contents of the source into the HI register
-            else if (_func == 0x11) {
-                state.hi = _rs;
-            }
-            // mflo: Move the contents of the LO register into the destination
-            else if (_func == 0x12) {
-                val = state.lo;
-            }
-            // mtlo: Move the contents of the source into the LO register
-            else if (_func == 0x13) {
-                state.lo = _rs;
-            }
-            // mult: Multiplies `rs` by `rt` and stores the result in HI and LO registers
-            else if (_func == 0x18) {
-                uint64 acc = uint64(int64(int32(_rs)) * int64(int32(_rt)));
-                state.hi = uint32(acc >> 32);
-                state.lo = uint32(acc);
-            }
-            // multu: Unsigned multiplies `rs` by `rt` and stores the result in HI and LO registers
-            else if (_func == 0x19) {
-                uint64 acc = uint64(uint64(_rs) * uint64(_rt));
-                state.hi = uint32(acc >> 32);
-                state.lo = uint32(acc);
-            }
-            // div: Divides `rs` by `rt`.
-            // Stores the quotient in LO
-            // And the remainder in HI
-            else if (_func == 0x1a) {
-                state.hi = uint32(int32(_rs) % int32(_rt));
-                state.lo = uint32(int32(_rs) / int32(_rt));
-            }
-            // divu: Unsigned divides `rs` by `rt`.
-            // Stores the quotient in LO
-            // And the remainder in HI
-            else if (_func == 0x1b) {
-                state.hi = _rs % _rt;
-                state.lo = _rs / _rt;
-            }
-
-            // Store the result in the destination register, if applicable
-            if (_storeReg != 0) {
-                state.registers[_storeReg] = val;
-            }
-
-            // Update the PC
-            state.pc = state.nextPC;
-            state.nextPC = state.nextPC + 4;
-
-            // Return the hash of the resulting state
-            out_ = outputState();
-        }
-    }
-
-    /// @notice Handles a jump instruction, updating the MIPS state PC where needed.
-    /// @param _linkReg The register to store the link to the instruction after the delay slot instruction.
-    /// @param _dest The destination to jump to.
-    /// @return out_ The hashed MIPS state.
-    function handleJump(uint32 _linkReg, uint32 _dest) internal returns (bytes32 out_) {
-        unchecked {
-            // Load state from memory.
-            State memory state;
-            assembly {
-                state := 0x80
-            }
-
-            if (state.nextPC != state.pc + 4) {
-                revert("jump in delay slot");
-            }
-
-            // Update the next PC to the jump destination.
-            uint32 prevPC = state.pc;
-            state.pc = state.nextPC;
-            state.nextPC = _dest;
-
-            // Update the link-register to the instruction after the delay slot instruction.
-            if (_linkReg != 0) {
-                state.registers[_linkReg] = prevPC + 8;
-            }
-
-            // Return the hash of the resulting state.
-            out_ = outputState();
-        }
-    }
-
-    /// @notice Handles a storing a value into a register.
-    /// @param _storeReg The register to store the value into.
-    /// @param _val The value to store.
-    /// @param _conditional Whether or not the store is conditional.
-    /// @return out_ The hashed MIPS state.
-    function handleRd(uint32 _storeReg, uint32 _val, bool _conditional) internal returns (bytes32 out_) {
-        unchecked {
-            // Load state from memory.
-            State memory state;
-            assembly {
-                state := 0x80
-            }
-
-            // The destination register must be valid.
-            require(_storeReg < 32, "valid register");
-
-            // Never write to reg 0, and it can be conditional (movz, movn).
-            if (_storeReg != 0 && _conditional) {
-                state.registers[_storeReg] = _val;
-            }
-
-            // Update the PC.
-            state.pc = state.nextPC;
-            state.nextPC = state.nextPC + 4;
-
-            // Return the hash of the resulting state.
-            out_ = outputState();
-        }
-    }
-
     /// @notice Computes the offset of the proof in the calldata.
     /// @param _proofIndex The index of the proof in the calldata.
     /// @return offset_ The offset of the proof in the calldata.
@@ -698,7 +492,7 @@ contract MIPS is ISemver {
             if (opcode == 2 || opcode == 3) {
                 // Take top 4 bits of the next PC (its 256 MB region), and concatenate with the 26-bit offset
                 uint32 target = (state.nextPC & 0xF0000000) | (insn & 0x03FFFFFF) << 2;
-                return handleJump(opcode == 2 ? 0 : 31, target);
+                return handleJumpAndReturnOutput(state, opcode == 2 ? 0 : 31, target);
             }
 
             // register fetch
@@ -722,7 +516,7 @@ contract MIPS is ISemver {
                     rt = insn & 0xFFFF;
                 } else {
                     // SignExtImm
-                    rt = SE(insn & 0xFFFF, 16);
+                    rt = ins.signExtend(insn & 0xFFFF, 16);
                 }
             } else if (opcode >= 0x28 || opcode == 0x22 || opcode == 0x26) {
                 // store rt value with store
@@ -733,7 +527,19 @@ contract MIPS is ISemver {
             }
 
             if ((opcode >= 4 && opcode < 8) || opcode == 1) {
-                return handleBranch(opcode, insn, rtReg, rs);
+                st.CpuScalars memory cpu = getCpuScalars(state);
+
+                ins.handleBranch({
+                    _cpu: cpu,
+                    _registers: state.registers,
+                    _opcode: opcode,
+                    _insn: insn,
+                    _rtReg: rtReg,
+                    _rs: rs
+                });
+                setStateCpuScalars(state, cpu);
+
+                return outputState();
             }
 
             uint32 storeAddr = 0xFF_FF_FF_FF;
@@ -742,7 +548,7 @@ contract MIPS is ISemver {
             uint32 mem;
             if (opcode >= 0x20) {
                 // M[R[rs]+SignExtImm]
-                rs += SE(insn & 0xFFFF, 16);
+                rs += ins.signExtend(insn & 0xFFFF, 16);
                 uint32 addr = rs & 0xFFFFFFFC;
                 mem = readMem(addr, 1);
                 if (opcode >= 0x28 && opcode != 0x30) {
@@ -754,22 +560,23 @@ contract MIPS is ISemver {
             }
 
             // ALU
-            uint32 val = execute(insn, rs, rt, mem) & 0xffFFffFF; // swr outputs more than 4 bytes without the mask
+            // Note: swr outputs more than 4 bytes without the mask 0xffFFffFF
+            uint32 val = ins.executeMipsInstruction(insn, rs, rt, mem) & 0xffFFffFF;
 
             uint32 func = insn & 0x3f; // 6-bits
             if (opcode == 0 && func >= 8 && func < 0x1c) {
                 if (func == 8 || func == 9) {
                     // jr/jalr
-                    return handleJump(func == 8 ? 0 : rdReg, rs);
+                    return handleJumpAndReturnOutput(state, func == 8 ? 0 : rdReg, rs);
                 }
 
                 if (func == 0xa) {
                     // movz
-                    return handleRd(rdReg, rs, rt == 0);
+                    return handleRdAndReturnOutput(state, rdReg, rs, rt == 0);
                 }
                 if (func == 0xb) {
                     // movn
-                    return handleRd(rdReg, rs, rt != 0);
+                    return handleRdAndReturnOutput(state, rdReg, rs, rt != 0);
                 }
 
                 // syscall (can read and write)
@@ -780,7 +587,19 @@ contract MIPS is ISemver {
                 // lo and hi registers
                 // can write back
                 if (func >= 0x10 && func < 0x1c) {
-                    return handleHiLo(func, rs, rt, rdReg);
+                    st.CpuScalars memory cpu = getCpuScalars(state);
+
+                    ins.handleHiLo({
+                        _cpu: cpu,
+                        _registers: state.registers,
+                        _func: func,
+                        _rs: rs,
+                        _rt: rt,
+                        _storeReg: rdReg
+                    });
+
+                    setStateCpuScalars(state, cpu);
+                    return outputState();
                 }
             }
 
@@ -795,260 +614,57 @@ contract MIPS is ISemver {
             }
 
             // write back the value to destination register
-            return handleRd(rdReg, val, true);
+            return handleRdAndReturnOutput(state, rdReg, val, true);
         }
     }
 
-    /// @notice Execute an instruction.
-    function execute(uint32 insn, uint32 rs, uint32 rt, uint32 mem) internal pure returns (uint32 out) {
-        unchecked {
-            uint32 opcode = insn >> 26; // 6-bits
+    function handleJumpAndReturnOutput(
+        State memory _state,
+        uint32 _linkReg,
+        uint32 _dest
+    )
+        internal
+        returns (bytes32 out_)
+    {
+        st.CpuScalars memory cpu = getCpuScalars(_state);
 
-            if (opcode == 0 || (opcode >= 8 && opcode < 0xF)) {
-                uint32 func = insn & 0x3f; // 6-bits
-                assembly {
-                    // transform ArithLogI to SPECIAL
-                    switch opcode
-                    // addi
-                    case 0x8 { func := 0x20 }
-                    // addiu
-                    case 0x9 { func := 0x21 }
-                    // stli
-                    case 0xA { func := 0x2A }
-                    // sltiu
-                    case 0xB { func := 0x2B }
-                    // andi
-                    case 0xC { func := 0x24 }
-                    // ori
-                    case 0xD { func := 0x25 }
-                    // xori
-                    case 0xE { func := 0x26 }
-                }
+        ins.handleJump({ _cpu: cpu, _registers: _state.registers, _linkReg: _linkReg, _dest: _dest });
 
-                // sll
-                if (func == 0x00) {
-                    return rt << ((insn >> 6) & 0x1F);
-                }
-                // srl
-                else if (func == 0x02) {
-                    return rt >> ((insn >> 6) & 0x1F);
-                }
-                // sra
-                else if (func == 0x03) {
-                    uint32 shamt = (insn >> 6) & 0x1F;
-                    return SE(rt >> shamt, 32 - shamt);
-                }
-                // sllv
-                else if (func == 0x04) {
-                    return rt << (rs & 0x1F);
-                }
-                // srlv
-                else if (func == 0x6) {
-                    return rt >> (rs & 0x1F);
-                }
-                // srav
-                else if (func == 0x07) {
-                    return SE(rt >> rs, 32 - rs);
-                }
-                // functs in range [0x8, 0x1b] are handled specially by other functions
-                // Explicitly enumerate each funct in range to reduce code diff against Go Vm
-                // jr
-                else if (func == 0x08) {
-                    return rs;
-                }
-                // jalr
-                else if (func == 0x09) {
-                    return rs;
-                }
-                // movz
-                else if (func == 0x0a) {
-                    return rs;
-                }
-                // movn
-                else if (func == 0x0b) {
-                    return rs;
-                }
-                // syscall
-                else if (func == 0x0c) {
-                    return rs;
-                }
-                // 0x0d - break not supported
-                // sync
-                else if (func == 0x0f) {
-                    return rs;
-                }
-                // mfhi
-                else if (func == 0x10) {
-                    return rs;
-                }
-                // mthi
-                else if (func == 0x11) {
-                    return rs;
-                }
-                // mflo
-                else if (func == 0x12) {
-                    return rs;
-                }
-                // mtlo
-                else if (func == 0x13) {
-                    return rs;
-                }
-                // mult
-                else if (func == 0x18) {
-                    return rs;
-                }
-                // multu
-                else if (func == 0x19) {
-                    return rs;
-                }
-                // div
-                else if (func == 0x1a) {
-                    return rs;
-                }
-                // divu
-                else if (func == 0x1b) {
-                    return rs;
-                }
-                // The rest includes transformed R-type arith imm instructions
-                // add
-                else if (func == 0x20) {
-                    return (rs + rt);
-                }
-                // addu
-                else if (func == 0x21) {
-                    return (rs + rt);
-                }
-                // sub
-                else if (func == 0x22) {
-                    return (rs - rt);
-                }
-                // subu
-                else if (func == 0x23) {
-                    return (rs - rt);
-                }
-                // and
-                else if (func == 0x24) {
-                    return (rs & rt);
-                }
-                // or
-                else if (func == 0x25) {
-                    return (rs | rt);
-                }
-                // xor
-                else if (func == 0x26) {
-                    return (rs ^ rt);
-                }
-                // nor
-                else if (func == 0x27) {
-                    return ~(rs | rt);
-                }
-                // slti
-                else if (func == 0x2a) {
-                    return int32(rs) < int32(rt) ? 1 : 0;
-                }
-                // sltiu
-                else if (func == 0x2b) {
-                    return rs < rt ? 1 : 0;
-                } else {
-                    revert("invalid instruction");
-                }
-            } else {
-                // SPECIAL2
-                if (opcode == 0x1C) {
-                    uint32 func = insn & 0x3f; // 6-bits
-                    // mul
-                    if (func == 0x2) {
-                        return uint32(int32(rs) * int32(rt));
-                    }
-                    // clz, clo
-                    else if (func == 0x20 || func == 0x21) {
-                        if (func == 0x20) {
-                            rs = ~rs;
-                        }
-                        uint32 i = 0;
-                        while (rs & 0x80000000 != 0) {
-                            i++;
-                            rs <<= 1;
-                        }
-                        return i;
-                    }
-                }
-                // lui
-                else if (opcode == 0x0F) {
-                    return rt << 16;
-                }
-                // lb
-                else if (opcode == 0x20) {
-                    return SE((mem >> (24 - (rs & 3) * 8)) & 0xFF, 8);
-                }
-                // lh
-                else if (opcode == 0x21) {
-                    return SE((mem >> (16 - (rs & 2) * 8)) & 0xFFFF, 16);
-                }
-                // lwl
-                else if (opcode == 0x22) {
-                    uint32 val = mem << ((rs & 3) * 8);
-                    uint32 mask = uint32(0xFFFFFFFF) << ((rs & 3) * 8);
-                    return (rt & ~mask) | val;
-                }
-                // lw
-                else if (opcode == 0x23) {
-                    return mem;
-                }
-                // lbu
-                else if (opcode == 0x24) {
-                    return (mem >> (24 - (rs & 3) * 8)) & 0xFF;
-                }
-                //  lhu
-                else if (opcode == 0x25) {
-                    return (mem >> (16 - (rs & 2) * 8)) & 0xFFFF;
-                }
-                //  lwr
-                else if (opcode == 0x26) {
-                    uint32 val = mem >> (24 - (rs & 3) * 8);
-                    uint32 mask = uint32(0xFFFFFFFF) >> (24 - (rs & 3) * 8);
-                    return (rt & ~mask) | val;
-                }
-                //  sb
-                else if (opcode == 0x28) {
-                    uint32 val = (rt & 0xFF) << (24 - (rs & 3) * 8);
-                    uint32 mask = 0xFFFFFFFF ^ uint32(0xFF << (24 - (rs & 3) * 8));
-                    return (mem & mask) | val;
-                }
-                //  sh
-                else if (opcode == 0x29) {
-                    uint32 val = (rt & 0xFFFF) << (16 - (rs & 2) * 8);
-                    uint32 mask = 0xFFFFFFFF ^ uint32(0xFFFF << (16 - (rs & 2) * 8));
-                    return (mem & mask) | val;
-                }
-                //  swl
-                else if (opcode == 0x2a) {
-                    uint32 val = rt >> ((rs & 3) * 8);
-                    uint32 mask = uint32(0xFFFFFFFF) >> ((rs & 3) * 8);
-                    return (mem & ~mask) | val;
-                }
-                //  sw
-                else if (opcode == 0x2b) {
-                    return rt;
-                }
-                //  swr
-                else if (opcode == 0x2e) {
-                    uint32 val = rt << (24 - (rs & 3) * 8);
-                    uint32 mask = uint32(0xFFFFFFFF) << (24 - (rs & 3) * 8);
-                    return (mem & ~mask) | val;
-                }
-                // ll
-                else if (opcode == 0x30) {
-                    return mem;
-                }
-                // sc
-                else if (opcode == 0x38) {
-                    return rt;
-                } else {
-                    revert("invalid instruction");
-                }
-            }
-            revert("invalid instruction");
-        }
+        setStateCpuScalars(_state, cpu);
+        return outputState();
+    }
+
+    function handleRdAndReturnOutput(
+        State memory _state,
+        uint32 _storeReg,
+        uint32 _val,
+        bool _conditional
+    )
+        internal
+        returns (bytes32 out_)
+    {
+        st.CpuScalars memory cpu = getCpuScalars(_state);
+
+        ins.handleRd({
+            _cpu: cpu,
+            _registers: _state.registers,
+            _storeReg: _storeReg,
+            _val: _val,
+            _conditional: _conditional
+        });
+
+        setStateCpuScalars(_state, cpu);
+        return outputState();
+    }
+
+    function getCpuScalars(State memory _state) internal pure returns (st.CpuScalars memory) {
+        return st.CpuScalars({ pc: _state.pc, nextPC: _state.nextPC, lo: _state.lo, hi: _state.hi });
+    }
+
+    function setStateCpuScalars(State memory _state, st.CpuScalars memory _cpu) internal pure {
+        _state.pc = _cpu.pc;
+        _state.nextPC = _cpu.nextPC;
+        _state.lo = _cpu.lo;
+        _state.hi = _cpu.hi;
     }
 }

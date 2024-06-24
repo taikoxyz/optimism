@@ -1,5 +1,31 @@
 # Smart Contract Style Guide
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+
+- [Standards and Conventions](#standards-and-conventions)
+  - [Style](#style)
+    - [Comments](#comments)
+    - [Errors](#errors)
+    - [Function Parameters](#function-parameters)
+    - [Function Return Arguments](#function-return-arguments)
+    - [Event Parameters](#event-parameters)
+    - [Immutable variables](#immutable-variables)
+    - [Spacers](#spacers)
+  - [Proxy by Default](#proxy-by-default)
+  - [Versioning](#versioning)
+    - [Exceptions](#exceptions)
+  - [Dependencies](#dependencies)
+  - [Source Code](#source-code)
+  - [Tests](#tests)
+    - [Expect Revert with Low Level Calls](#expect-revert-with-low-level-calls)
+    - [Organizing Principles](#organizing-principles)
+    - [Test function naming convention](#test-function-naming-convention)
+    - [Contract Naming Conventions](#contract-naming-conventions)
+- [Withdrawing From Fee Vaults](#withdrawing-from-fee-vaults)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
 This document provides guidance on how we organize and write our smart contracts. For cases where
 this document does not provide guidance, please refer to existing contracts for guidance,
 with priority on the `L2OutputOracle` and `OptimismPortal`.
@@ -84,27 +110,39 @@ pattern for each new implementation contract:
 
 ### Versioning
 
-All (non-library and non-abstract) contracts MUST extend the `Semver` base contract which
+All (non-library and non-abstract) contracts MUST inherit the `ISemver` interface which
 exposes a `version()` function that returns a semver-compliant version string.
 
-Contracts must have a `Semver` of `1.0.0` or greater to be production ready. Contracts
-with `Semver` values less than `1.0.0` should only be used locally or on devnets.
+Contracts must have a `version` of `1.0.0` or greater to be production ready.
 
-Additionally, contracts MUST use the following versioning scheme:
+Additionally, contracts MUST use the following versioning scheme when incrementing their version:
 
 - `patch` releases are to be used only for changes that do NOT modify contract bytecode (such as updating comments).
 - `minor` releases are to be used for changes that modify bytecode OR changes that expand the contract ABI provided that these changes do NOT break the existing interface.
 - `major` releases are to be used for changes that break the existing contract interface OR changes that modify the security model of a contract.
+
+The remainder of the contract versioning and release process can be found in [`VERSIONING.md](./VERSIONING.md).
 
 #### Exceptions
 
 We have made an exception to the `Semver` rule for the `WETH` contract to avoid
 making changes to a well-known, simple, and recognizable contract.
 
+Additionally, bumping the patch version does change the bytecode, so another exception is carved out for this.
+In other words, changing comments increments the patch version, which changes bytecode. This bytecode
+change implies a minor version increment is needed, but because it's just a version change, only a
+patch increment should be used.
+
 ### Dependencies
 
 Where basic functionality is already supported by an existing contract in the OpenZeppelin library,
 we should default to using the Upgradeable version of that contract.
+
+### Source Code
+
+The following guidelines should be followed for all contracts in the `src/` directory:
+
+- All state changing functions should emit a corresponding event. This ensures that all actions are transparent, can be easily monitored, and can be reconstructed from the event logs.
 
 ### Tests
 

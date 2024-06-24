@@ -17,14 +17,17 @@ import (
 )
 
 var (
-	frozen = time.Unix(int64(time.Hour.Seconds()), 0)
+	frozen       = time.Unix(int64(time.Hour.Seconds()), 0)
+	honestActor1 = common.Address{0x11, 0xaa}
+	honestActor2 = common.Address{0x22, 0xbb}
+	honestActor3 = common.Address{0x33, 0xcc}
 )
 
 func TestCheckBonds(t *testing.T) {
 	weth1 := common.Address{0x1a}
 	weth1Balance := big.NewInt(4200)
 	weth2 := common.Address{0x2b}
-	weth2Balance := big.NewInt(6000)
+	weth2Balance := big.NewInt(10) // Insufficient
 	game1 := &monTypes.EnrichedGameData{
 		Credits: map[common.Address]*big.Int{
 			common.Address{0x01}: big.NewInt(2),
@@ -40,7 +43,7 @@ func TestCheckBonds(t *testing.T) {
 		ETHCollateral: weth2Balance,
 	}
 
-	bonds, metrics, _ := setupBondMetricsTest(t)
+	bonds, metrics, logs := setupBondMetricsTest(t)
 	bonds.CheckBonds([]*monTypes.EnrichedGameData{game1, game2})
 
 	require.Len(t, metrics.recorded, 2)
@@ -50,16 +53,26 @@ func TestCheckBonds(t *testing.T) {
 	require.Equal(t, metrics.recorded[weth1].Actual.Uint64(), weth1Balance.Uint64())
 	require.Equal(t, metrics.recorded[weth2].Required.Uint64(), uint64(46))
 	require.Equal(t, metrics.recorded[weth2].Actual.Uint64(), weth2Balance.Uint64())
+
+	require.NotNil(t, logs.FindLog(
+		testlog.NewMessageFilter("Insufficient collateral"),
+		testlog.NewAttributesFilter("delayedWETH", weth2.Hex()),
+		testlog.NewAttributesFilter("required", "46"),
+		testlog.NewAttributesFilter("actual", weth2Balance.String())))
+	// No messages about weth1 since it has sufficient collateral
+	require.Nil(t, logs.FindLog(testlog.NewAttributesFilter("delayedWETH", weth1.Hex())))
 }
 
 func TestCheckRecipientCredit(t *testing.T) {
-	addr1 := common.Address{0x1a}
-	addr2 := common.Address{0x2b}
+	addr1 := honestActor1
+	addr2 := honestActor2
 	addr3 := common.Address{0x3c}
 	addr4 := common.Address{0x4d}
+	notRootPosition := types.NewPositionFromGIndex(big.NewInt(2))
 	// Game has not reached max duration
 	game1 := &monTypes.EnrichedGameData{
 		MaxClockDuration: 50000,
+		WETHDelay:        30 * time.Minute,
 		GameMetadata: gameTypes.GameMetadata{
 			Proxy:     common.Address{0x11},
 			Timestamp: uint64(frozen.Unix()),
@@ -68,7 +81,8 @@ func TestCheckRecipientCredit(t *testing.T) {
 			{ // Expect 10 credits for addr1
 				Claim: types.Claim{
 					ClaimData: types.ClaimData{
-						Bond: big.NewInt(10),
+						Bond:     big.NewInt(10),
+						Position: types.RootPosition,
 					},
 					Claimant: addr1,
 				},
@@ -77,7 +91,8 @@ func TestCheckRecipientCredit(t *testing.T) {
 			{ // No expected credits as not resolved
 				Claim: types.Claim{
 					ClaimData: types.ClaimData{
-						Bond: big.NewInt(15),
+						Bond:     big.NewInt(15),
+						Position: notRootPosition,
 					},
 					Claimant: addr1,
 				},
@@ -86,7 +101,8 @@ func TestCheckRecipientCredit(t *testing.T) {
 			{ // Expect 5 credits for addr1
 				Claim: types.Claim{
 					ClaimData: types.ClaimData{
-						Bond: big.NewInt(5),
+						Bond:     big.NewInt(5),
+						Position: notRootPosition,
 					},
 					Claimant: addr1,
 				},
@@ -95,7 +111,8 @@ func TestCheckRecipientCredit(t *testing.T) {
 			{ // Expect 7 credits for addr2
 				Claim: types.Claim{
 					ClaimData: types.ClaimData{
-						Bond: big.NewInt(7),
+						Bond:     big.NewInt(7),
+						Position: notRootPosition,
 					},
 					Claimant:    addr3,
 					CounteredBy: addr2,
@@ -105,7 +122,8 @@ func TestCheckRecipientCredit(t *testing.T) {
 			{ // Expect 3 credits for addr4
 				Claim: types.Claim{
 					ClaimData: types.ClaimData{
-						Bond: big.NewInt(3),
+						Bond:     big.NewInt(3),
+						Position: notRootPosition,
 					},
 					Claimant: addr4,
 				},
@@ -127,6 +145,7 @@ func TestCheckRecipientCredit(t *testing.T) {
 	// Max duration has been reached
 	game2 := &monTypes.EnrichedGameData{
 		MaxClockDuration: 5,
+		WETHDelay:        5 * time.Second,
 		GameMetadata: gameTypes.GameMetadata{
 			Proxy:     common.Address{0x22},
 			Timestamp: uint64(frozen.Unix()) - 11,
@@ -135,7 +154,8 @@ func TestCheckRecipientCredit(t *testing.T) {
 			{ // Expect 11 credits for addr1
 				Claim: types.Claim{
 					ClaimData: types.ClaimData{
-						Bond: big.NewInt(11),
+						Bond:     big.NewInt(11),
+						Position: types.RootPosition,
 					},
 					Claimant: addr1,
 				},
@@ -144,7 +164,8 @@ func TestCheckRecipientCredit(t *testing.T) {
 			{ // No expected credits as not resolved
 				Claim: types.Claim{
 					ClaimData: types.ClaimData{
-						Bond: big.NewInt(15),
+						Bond:     big.NewInt(15),
+						Position: notRootPosition,
 					},
 					Claimant: addr1,
 				},
@@ -153,7 +174,8 @@ func TestCheckRecipientCredit(t *testing.T) {
 			{ // Expect 6 credits for addr1
 				Claim: types.Claim{
 					ClaimData: types.ClaimData{
-						Bond: big.NewInt(6),
+						Bond:     big.NewInt(6),
+						Position: notRootPosition,
 					},
 					Claimant: addr1,
 				},
@@ -162,7 +184,8 @@ func TestCheckRecipientCredit(t *testing.T) {
 			{ // Expect 8 credits for addr2
 				Claim: types.Claim{
 					ClaimData: types.ClaimData{
-						Bond: big.NewInt(8),
+						Bond:     big.NewInt(8),
+						Position: notRootPosition,
 					},
 					Claimant:    addr3,
 					CounteredBy: addr2,
@@ -172,7 +195,8 @@ func TestCheckRecipientCredit(t *testing.T) {
 			{ // Expect 4 credits for addr4
 				Claim: types.Claim{
 					ClaimData: types.ClaimData{
-						Bond: big.NewInt(4),
+						Bond:     big.NewInt(4),
+						Position: notRootPosition,
 					},
 					Claimant: addr4,
 				},
@@ -196,6 +220,7 @@ func TestCheckRecipientCredit(t *testing.T) {
 	// Game has not reached max duration
 	game3 := &monTypes.EnrichedGameData{
 		MaxClockDuration: 50000,
+		WETHDelay:        10 * time.Hour,
 		GameMetadata: gameTypes.GameMetadata{
 			Proxy:     common.Address{0x33},
 			Timestamp: uint64(frozen.Unix()) - 11,
@@ -204,7 +229,8 @@ func TestCheckRecipientCredit(t *testing.T) {
 			{ // Expect 9 credits for addr1
 				Claim: types.Claim{
 					ClaimData: types.ClaimData{
-						Bond: big.NewInt(9),
+						Bond:     big.NewInt(9),
+						Position: types.RootPosition,
 					},
 					Claimant: addr1,
 				},
@@ -213,7 +239,8 @@ func TestCheckRecipientCredit(t *testing.T) {
 			{ // Expect 6 credits for addr2
 				Claim: types.Claim{
 					ClaimData: types.ClaimData{
-						Bond: big.NewInt(6),
+						Bond:     big.NewInt(6),
+						Position: notRootPosition,
 					},
 					Claimant:    addr4,
 					CounteredBy: addr2,
@@ -223,7 +250,8 @@ func TestCheckRecipientCredit(t *testing.T) {
 			{ // Expect 2 credits for addr4
 				Claim: types.Claim{
 					ClaimData: types.ClaimData{
-						Bond: big.NewInt(2),
+						Bond:     big.NewInt(2),
+						Position: notRootPosition,
 					},
 					Claimant: addr4,
 				},
@@ -246,24 +274,30 @@ func TestCheckRecipientCredit(t *testing.T) {
 	// Game has not reached max duration
 	game4 := &monTypes.EnrichedGameData{
 		MaxClockDuration: 10,
+		WETHDelay:        10 * time.Second,
 		GameMetadata: gameTypes.GameMetadata{
-			Proxy:     common.Address{44},
+			Proxy:     common.Address{0x44},
 			Timestamp: uint64(frozen.Unix()) - 22,
 		},
+		BlockNumberChallenged: true,
+		BlockNumberChallenger: addr1,
 		Claims: []monTypes.EnrichedClaim{
-			{ // Expect 9 credits for addr1
+			{ // Expect 9 credits for addr1 as the block number challenger
 				Claim: types.Claim{
 					ClaimData: types.ClaimData{
-						Bond: big.NewInt(9),
+						Bond:     big.NewInt(9),
+						Position: types.RootPosition,
 					},
-					Claimant: addr1,
+					Claimant:    addr2,
+					CounteredBy: addr3,
 				},
 				Resolved: true,
 			},
 			{ // Expect 6 credits for addr2
 				Claim: types.Claim{
 					ClaimData: types.ClaimData{
-						Bond: big.NewInt(6),
+						Bond:     big.NewInt(6),
+						Position: notRootPosition,
 					},
 					Claimant:    addr4,
 					CounteredBy: addr2,
@@ -273,7 +307,8 @@ func TestCheckRecipientCredit(t *testing.T) {
 			{ // Expect 2 credits for addr4
 				Claim: types.Claim{
 					ClaimData: types.ClaimData{
-						Bond: big.NewInt(2),
+						Bond:     big.NewInt(2),
+						Position: notRootPosition,
 					},
 					Claimant: addr4,
 				},
@@ -297,88 +332,116 @@ func TestCheckRecipientCredit(t *testing.T) {
 	bonds.CheckBonds([]*monTypes.EnrichedGameData{game1, game2, game3, game4})
 
 	require.Len(t, m.credits, 6)
-	require.Contains(t, m.credits, metrics.CreditBelowMaxDuration)
-	require.Contains(t, m.credits, metrics.CreditEqualMaxDuration)
-	require.Contains(t, m.credits, metrics.CreditAboveMaxDuration)
-	require.Contains(t, m.credits, metrics.CreditBelowNonMaxDuration)
-	require.Contains(t, m.credits, metrics.CreditEqualNonMaxDuration)
-	require.Contains(t, m.credits, metrics.CreditAboveNonMaxDuration)
+	require.Contains(t, m.credits, metrics.CreditBelowWithdrawable)
+	require.Contains(t, m.credits, metrics.CreditEqualWithdrawable)
+	require.Contains(t, m.credits, metrics.CreditAboveWithdrawable)
+	require.Contains(t, m.credits, metrics.CreditBelowNonWithdrawable)
+	require.Contains(t, m.credits, metrics.CreditEqualNonWithdrawable)
+	require.Contains(t, m.credits, metrics.CreditAboveNonWithdrawable)
 
 	// Game 2 and 4 recipients added here as it has reached max duration
-	require.Equal(t, 2, m.credits[metrics.CreditBelowMaxDuration], "CreditBelowMaxDuration")
-	require.Equal(t, 3, m.credits[metrics.CreditEqualMaxDuration], "CreditEqualMaxDuration")
-	require.Equal(t, 2, m.credits[metrics.CreditAboveMaxDuration], "CreditAboveMaxDuration")
+	require.Equal(t, 2, m.credits[metrics.CreditBelowWithdrawable], "CreditBelowWithdrawable")
+	require.Equal(t, 3, m.credits[metrics.CreditEqualWithdrawable], "CreditEqualWithdrawable")
+	require.Equal(t, 2, m.credits[metrics.CreditAboveWithdrawable], "CreditAboveWithdrawable")
 
 	// Game 1 and 3 recipients added here as it hasn't reached max duration
-	require.Equal(t, 3, m.credits[metrics.CreditBelowNonMaxDuration], "CreditBelowNonMaxDuration")
-	require.Equal(t, 2, m.credits[metrics.CreditEqualNonMaxDuration], "CreditEqualNonMaxDuration")
-	require.Equal(t, 2, m.credits[metrics.CreditAboveNonMaxDuration], "CreditAboveNonMaxDuration")
+	require.Equal(t, 3, m.credits[metrics.CreditBelowNonWithdrawable], "CreditBelowNonWithdrawable")
+	require.Equal(t, 2, m.credits[metrics.CreditEqualNonWithdrawable], "CreditEqualNonWithdrawable")
+	require.Equal(t, 2, m.credits[metrics.CreditAboveNonWithdrawable], "CreditAboveNonWithdrawable")
+
+	require.Len(t, m.honestWithdrawable, 3)
+	requireBigInt := func(name string, expected, actual *big.Int) {
+		require.Truef(t, expected.Cmp(actual) == 0, "Expected %v withdrawable to be %v but was %v", name, expected, actual)
+	}
+	requireBigInt("honest addr1", m.honestWithdrawable[addr1], big.NewInt(19))
+	requireBigInt("honest addr2", m.honestWithdrawable[addr2], big.NewInt(13))
+	requireBigInt("honest addr3", m.honestWithdrawable[honestActor3], big.NewInt(0))
 
 	// Logs from game1
 	// addr1 is correct so has no logs
 	// addr2 is below expected before max duration, so warn about early withdrawal
 	require.NotNil(t, logs.FindLog(
-		testlog.NewLevelFilter(log.LevelWarn),
+		testlog.NewLevelFilter(log.LevelError),
 		testlog.NewMessageFilter("Credit withdrawn early"),
-		testlog.NewAttributesFilter("gameAddr", game1.Proxy.Hex()),
+		testlog.NewAttributesFilter("game", game1.Proxy.Hex()),
 		testlog.NewAttributesFilter("recipient", addr2.Hex()),
-		testlog.NewAttributesFilter("duration", "unreached")))
+		testlog.NewAttributesFilter("withdrawable", "non_withdrawable")))
 	// addr3 is above expected
 	require.NotNil(t, logs.FindLog(
 		testlog.NewLevelFilter(log.LevelWarn),
 		testlog.NewMessageFilter("Credit above expected amount"),
-		testlog.NewAttributesFilter("gameAddr", game1.Proxy.Hex()),
+		testlog.NewAttributesFilter("game", game1.Proxy.Hex()),
 		testlog.NewAttributesFilter("recipient", addr3.Hex()),
-		testlog.NewAttributesFilter("duration", "unreached")))
+		testlog.NewAttributesFilter("withdrawable", "non_withdrawable")))
 	// addr4 is below expected before max duration, so warn about early withdrawal
 	require.NotNil(t, logs.FindLog(
-		testlog.NewLevelFilter(log.LevelWarn),
+		testlog.NewLevelFilter(log.LevelError),
 		testlog.NewMessageFilter("Credit withdrawn early"),
-		testlog.NewAttributesFilter("gameAddr", game1.Proxy.Hex()),
+		testlog.NewAttributesFilter("game", game1.Proxy.Hex()),
 		testlog.NewAttributesFilter("recipient", addr4.Hex()),
-		testlog.NewAttributesFilter("duration", "unreached")))
+		testlog.NewAttributesFilter("withdrawable", "non_withdrawable")))
 
 	// Logs from game 2
-	// addr1 is below expected - no warning as withdrawals may now be possible
-	// addr2 is correct
+	// addr1 is below expected - no warning as withdrawals may now be possible, but has unclaimed credit
+	require.NotNil(t, logs.FindLog(
+		testlog.NewLevelFilter(log.LevelWarn),
+		testlog.NewMessageFilter("Found unclaimed credit"),
+		testlog.NewAttributesFilter("game", game2.Proxy.Hex()),
+		testlog.NewAttributesFilter("recipient", addr1.Hex())))
+	// addr2 is correct but has unclaimed credit
+	require.NotNil(t, logs.FindLog(
+		testlog.NewLevelFilter(log.LevelWarn),
+		testlog.NewMessageFilter("Found unclaimed credit"),
+		testlog.NewAttributesFilter("game", game2.Proxy.Hex()),
+		testlog.NewAttributesFilter("recipient", addr2.Hex())))
 	// addr3 is above expected - warn
 	require.NotNil(t, logs.FindLog(
 		testlog.NewLevelFilter(log.LevelWarn),
 		testlog.NewMessageFilter("Credit above expected amount"),
-		testlog.NewAttributesFilter("gameAddr", game2.Proxy.Hex()),
+		testlog.NewAttributesFilter("game", game2.Proxy.Hex()),
 		testlog.NewAttributesFilter("recipient", addr3.Hex()),
-		testlog.NewAttributesFilter("duration", "reached")))
+		testlog.NewAttributesFilter("withdrawable", "withdrawable")))
 	// addr4 is correct
 
 	// Logs from game 3
 	// addr1 is correct so has no logs
 	// addr2 is below expected before max duration, so warn about early withdrawal
 	require.NotNil(t, logs.FindLog(
-		testlog.NewLevelFilter(log.LevelWarn),
+		testlog.NewLevelFilter(log.LevelError),
 		testlog.NewMessageFilter("Credit withdrawn early"),
-		testlog.NewAttributesFilter("gameAddr", game3.Proxy.Hex()),
+		testlog.NewAttributesFilter("game", game3.Proxy.Hex()),
 		testlog.NewAttributesFilter("recipient", addr2.Hex()),
-		testlog.NewAttributesFilter("duration", "unreached")))
+		testlog.NewAttributesFilter("withdrawable", "non_withdrawable")))
 	// addr3 is not involved so no logs
 	// addr4 is above expected before max duration, so warn
 	require.NotNil(t, logs.FindLog(
 		testlog.NewLevelFilter(log.LevelWarn),
 		testlog.NewMessageFilter("Credit above expected amount"),
-		testlog.NewAttributesFilter("gameAddr", game3.Proxy.Hex()),
+		testlog.NewAttributesFilter("game", game3.Proxy.Hex()),
 		testlog.NewAttributesFilter("recipient", addr4.Hex()),
-		testlog.NewAttributesFilter("duration", "unreached")))
+		testlog.NewAttributesFilter("withdrawable", "non_withdrawable")))
 
 	// Logs from game 4
-	// addr1 is correct so has no logs
-	// addr2 is below expected before max duration, no long because withdrawals may be possible
+	// addr1 is correct but has unclaimed credit
+	require.NotNil(t, logs.FindLog(
+		testlog.NewLevelFilter(log.LevelWarn),
+		testlog.NewMessageFilter("Found unclaimed credit"),
+		testlog.NewAttributesFilter("game", game4.Proxy.Hex()),
+		testlog.NewAttributesFilter("recipient", addr1.Hex())))
+	// addr2 is below expected before max duration, no log because withdrawals may be possible but warn about unclaimed
+	require.NotNil(t, logs.FindLog(
+		testlog.NewLevelFilter(log.LevelWarn),
+		testlog.NewMessageFilter("Found unclaimed credit"),
+		testlog.NewAttributesFilter("game", game4.Proxy.Hex()),
+		testlog.NewAttributesFilter("recipient", addr2.Hex())))
 	// addr3 is not involved so no logs
 	// addr4 is above expected before max duration, so warn
 	require.NotNil(t, logs.FindLog(
 		testlog.NewLevelFilter(log.LevelWarn),
 		testlog.NewMessageFilter("Credit above expected amount"),
-		testlog.NewAttributesFilter("gameAddr", game4.Proxy.Hex()),
+		testlog.NewAttributesFilter("game", game4.Proxy.Hex()),
 		testlog.NewAttributesFilter("recipient", addr4.Hex()),
-		testlog.NewAttributesFilter("duration", "reached")))
+		testlog.NewAttributesFilter("withdrawable", "withdrawable")))
 }
 
 func setupBondMetricsTest(t *testing.T) (*Bonds, *stubBondMetrics, *testlog.CapturingHandler) {
@@ -387,13 +450,19 @@ func setupBondMetricsTest(t *testing.T) (*Bonds, *stubBondMetrics, *testlog.Capt
 		credits:  make(map[metrics.CreditExpectation]int),
 		recorded: make(map[common.Address]Collateral),
 	}
-	bonds := NewBonds(logger, metrics, clock.NewDeterministicClock(frozen))
+	honestActors := monTypes.NewHonestActors([]common.Address{honestActor1, honestActor2, honestActor3})
+	bonds := NewBonds(logger, metrics, honestActors, clock.NewDeterministicClock(frozen))
 	return bonds, metrics, logs
 }
 
 type stubBondMetrics struct {
-	credits  map[metrics.CreditExpectation]int
-	recorded map[common.Address]Collateral
+	credits            map[metrics.CreditExpectation]int
+	recorded           map[common.Address]Collateral
+	honestWithdrawable map[common.Address]*big.Int
+}
+
+func (s *stubBondMetrics) RecordHonestWithdrawableAmounts(values map[common.Address]*big.Int) {
+	s.honestWithdrawable = values
 }
 
 func (s *stubBondMetrics) RecordBondCollateral(addr common.Address, required *big.Int, available *big.Int) {
