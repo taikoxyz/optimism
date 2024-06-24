@@ -196,6 +196,8 @@ type TxCandidate struct {
 	GasLimit uint64
 	// Value is the value to be used in the constructed tx.
 	Value *big.Int
+	// AccessList is an EIP-2930 access list to be used in the constructed tx.
+	AccessList types.AccessList
 }
 
 // Send is used to publish a transaction with incrementally higher gas prices
@@ -265,12 +267,13 @@ func (m *SimpleTxManager) craftTx(ctx context.Context, candidate TxCandidate) (*
 	// If the gas limit is set, we can use that as the gas
 	if gasLimit == 0 {
 		callArgs := ethereum.CallMsg{
-			From:      m.cfg.From,
-			To:        candidate.To,
-			GasTipCap: gasTipCap,
-			GasFeeCap: gasFeeCap,
-			Data:      candidate.TxData,
-			Value:     candidate.Value,
+			From:       m.cfg.From,
+			To:         candidate.To,
+			GasTipCap:  gasTipCap,
+			GasFeeCap:  gasFeeCap,
+			Data:       candidate.TxData,
+			Value:      candidate.Value,
+			AccessList: candidate.AccessList,
 		}
 
 		for _, blob := range candidate.Blobs {
@@ -316,6 +319,7 @@ func (m *SimpleTxManager) craftTx(ctx context.Context, candidate TxCandidate) (*
 			Gas:        gasLimit,
 			BlobHashes: blobHashes,
 			Sidecar:    sidecar,
+			AccessList: candidate.AccessList,
 		}
 		if err := finishBlobTx(message, m.chainID, gasTipCap, gasFeeCap, blobFeeCap, candidate.Value); err != nil {
 			return nil, fmt.Errorf("failed to create blob transaction: %w", err)
@@ -323,13 +327,14 @@ func (m *SimpleTxManager) craftTx(ctx context.Context, candidate TxCandidate) (*
 		txMessage = message
 	} else {
 		txMessage = &types.DynamicFeeTx{
-			ChainID:   m.chainID,
-			To:        candidate.To,
-			GasTipCap: gasTipCap,
-			GasFeeCap: gasFeeCap,
-			Value:     candidate.Value,
-			Data:      candidate.TxData,
-			Gas:       gasLimit,
+			ChainID:    m.chainID,
+			To:         candidate.To,
+			GasTipCap:  gasTipCap,
+			GasFeeCap:  gasFeeCap,
+			Value:      candidate.Value,
+			Data:       candidate.TxData,
+			Gas:        gasLimit,
+			AccessList: candidate.AccessList,
 		}
 	}
 	return m.signWithNextNonce(ctx, txMessage) // signer sets the nonce field of the tx
