@@ -107,6 +107,8 @@ type ETHBackend interface {
 	// EstimateGas returns an estimate of the amount of gas needed to execute the given
 	// transaction against the current pending block.
 	EstimateGas(ctx context.Context, msg ethereum.CallMsg) (uint64, error)
+	// CreateAccessList returns an estimate of the AccessList
+	CreateAccessList(ctx context.Context, msg ethereum.CallMsg) (*types.AccessList, uint64, string, error)
 	// Close the underlying eth connection
 	Close()
 }
@@ -195,8 +197,6 @@ type TxCandidate struct {
 	GasLimit uint64
 	// Value is the value to be used in the constructed tx.
 	Value *big.Int
-	// AccessList is an EIP-2930 access list to be used in the constructed tx.
-	AccessList types.AccessList
 }
 
 // Send is used to publish a transaction with incrementally higher gas prices
@@ -263,18 +263,21 @@ func (m *SimpleTxManager) craftTx(ctx context.Context, candidate TxCandidate) (*
 
 	gasLimit := candidate.GasLimit
 
+	callArgs := ethereum.CallMsg{
+		From:      m.cfg.From,
+		To:        candidate.To,
+		GasTipCap: gasTipCap,
+		GasFeeCap: gasFeeCap,
+		Data:      candidate.TxData,
+		Value:     candidate.Value,
+	}
+
+	accessList, _, _, err := m.backend.CreateAccessList(ctx, callArgs)
+	if err != nil {
+		return nil, err
+	}
 	// If the gas limit is set, we can use that as the gas
 	if gasLimit == 0 {
-		callArgs := ethereum.CallMsg{
-			From:       m.cfg.From,
-			To:         candidate.To,
-			GasTipCap:  gasTipCap,
-			GasFeeCap:  gasFeeCap,
-			Data:       candidate.TxData,
-			Value:      candidate.Value,
-			AccessList: candidate.AccessList,
-		}
-
 		for _, blob := range candidate.Blobs {
 			commitment, err := blob.ComputeKZGCommitment()
 			if err != nil {
@@ -318,7 +321,7 @@ func (m *SimpleTxManager) craftTx(ctx context.Context, candidate TxCandidate) (*
 			Gas:        gasLimit,
 			BlobHashes: blobHashes,
 			Sidecar:    sidecar,
-			AccessList: candidate.AccessList,
+			AccessList: *accessList,
 		}
 		if err := finishBlobTx(message, m.chainID, gasTipCap, gasFeeCap, blobFeeCap, candidate.Value); err != nil {
 			return nil, fmt.Errorf("failed to create blob transaction: %w", err)
@@ -333,7 +336,7 @@ func (m *SimpleTxManager) craftTx(ctx context.Context, candidate TxCandidate) (*
 			Value:      candidate.Value,
 			Data:       candidate.TxData,
 			Gas:        gasLimit,
-			AccessList: candidate.AccessList,
+			AccessList: *accessList,
 		}
 	}
 	return m.signWithNextNonce(ctx, txMessage) // signer sets the nonce field of the tx
