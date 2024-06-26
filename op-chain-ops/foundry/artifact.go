@@ -49,7 +49,7 @@ func (a Artifact) MarshalJSON() ([]byte, error) {
 	return json.Marshal(artifact)
 }
 
-// artifactMarshaling is a helper struct for marshaling and unmarshaling
+// artifactMarshaling is a helper struct for marshaling and unmarshalling
 // foundry artifacts.
 type artifactMarshaling struct {
 	ABI              json.RawMessage    `json:"abi"`
@@ -66,7 +66,7 @@ type DeployedBytecode struct {
 	ImmutableReferences json.RawMessage `json:"immutableReferences,omitempty"`
 }
 
-// DeployedBytecode represents the bytecode section of the solc compiler output.
+// Bytecode represents the bytecode section of the solc compiler output.
 type Bytecode struct {
 	SourceMap           string          `json:"sourceMap"`
 	Object              hexutil.Bytes   `json:"object"`

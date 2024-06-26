@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum-optimism/optimism/op-challenger/game/fault/contracts"
+	metrics2 "github.com/ethereum-optimism/optimism/op-challenger/game/fault/contracts/metrics"
+	"github.com/ethereum-optimism/optimism/op-service/sources/batching"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -28,8 +31,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ethereum-optimism/optimism/op-bindings/bindings"
-	"github.com/ethereum-optimism/optimism/op-bindings/predeploys"
+	"github.com/ethereum-optimism/optimism/op-e2e/bindings"
 	"github.com/ethereum-optimism/optimism/op-e2e/config"
 	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils"
 	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils/geth"
@@ -43,6 +45,7 @@ import (
 	"github.com/ethereum-optimism/optimism/op-service/client"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 	"github.com/ethereum-optimism/optimism/op-service/oppprof"
+	"github.com/ethereum-optimism/optimism/op-service/predeploys"
 	"github.com/ethereum-optimism/optimism/op-service/retry"
 	"github.com/ethereum-optimism/optimism/op-service/sources"
 	"github.com/ethereum-optimism/optimism/op-service/testlog"
@@ -90,7 +93,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestL2OutputSubmitter(t *testing.T) {
-	InitParallel(t, SkipOnFPAC)
+	InitParallel(t, SkipOnFaultProofs)
 
 	cfg := DefaultSystemConfig(t)
 	cfg.NonFinalizedProposals = true // speed up the time till we see output proposals
@@ -158,8 +161,8 @@ func TestL2OutputSubmitter(t *testing.T) {
 	}
 }
 
-func TestL2OutputSubmitterFPAC(t *testing.T) {
-	InitParallel(t, SkipOnNotFPAC)
+func TestL2OutputSubmitterFaultProofs(t *testing.T) {
+	InitParallel(t, SkipOnL2OO)
 
 	cfg := DefaultSystemConfig(t)
 	cfg.NonFinalizedProposals = true // speed up the time till we see output proposals
@@ -192,21 +195,21 @@ func TestL2OutputSubmitterFPAC(t *testing.T) {
 		require.Nil(t, err)
 
 		if latestGameCount.Cmp(initialGameCount) > 0 {
+			caller := batching.NewMultiCaller(l1Client.Client(), batching.DefaultBatchSize)
 			committedL2Output, err := disputeGameFactory.GameAtIndex(&bind.CallOpts{}, new(big.Int).Sub(latestGameCount, common.Big1))
 			require.Nil(t, err)
-			proxy, err := bindings.NewFaultDisputeGameCaller(committedL2Output.Proxy, l1Client)
+			proxy, err := contracts.NewFaultDisputeGameContract(context.Background(), metrics2.NoopContractMetrics, committedL2Output.Proxy, caller)
 			require.Nil(t, err)
-			committedOutputRoot, err := proxy.RootClaim(&bind.CallOpts{})
+			claim, err := proxy.GetClaim(context.Background(), 0)
 			require.Nil(t, err)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			extradata, err := proxy.ExtraData(&bind.CallOpts{})
+			_, gameBlockNumber, err := proxy.GetBlockRange(ctx)
 			require.Nil(t, err)
-			gameBlockNumber := new(big.Int).SetBytes(extradata[0:32])
-			l2Output, err := rollupClient.OutputAtBlock(ctx, gameBlockNumber.Uint64())
+			l2Output, err := rollupClient.OutputAtBlock(ctx, gameBlockNumber)
 			require.Nil(t, err)
-			require.Equal(t, l2Output.OutputRoot[:], committedOutputRoot[:])
+			require.EqualValues(t, l2Output.OutputRoot, claim.Value)
 			break
 		}
 
@@ -614,7 +617,6 @@ func L1InfoFromState(ctx context.Context, contract *bindings.L1Block, l2Number *
 // TestSystemMockP2P sets up a L1 Geth node, a rollup node, and a L2 geth node and then confirms that
 // the nodes can sync L2 blocks before they are confirmed on L1.
 func TestSystemMockP2P(t *testing.T) {
-	t.Skip("flaky in CI") // TODO(CLI-3859): Re-enable this test.
 	InitParallel(t)
 
 	cfg := DefaultSystemConfig(t)
@@ -1150,7 +1152,7 @@ func TestWithdrawals(t *testing.T) {
 	proveFee := new(big.Int).Mul(new(big.Int).SetUint64(proveReceipt.GasUsed), proveReceipt.EffectiveGasPrice)
 	finalizeFee := new(big.Int).Mul(new(big.Int).SetUint64(finalizeReceipt.GasUsed), finalizeReceipt.EffectiveGasPrice)
 	fees = new(big.Int).Add(proveFee, finalizeFee)
-	if e2eutils.UseFPAC() {
+	if e2eutils.UseFaultProofs() {
 		resolveClaimFee := new(big.Int).Mul(new(big.Int).SetUint64(resolveClaimReceipt.GasUsed), resolveClaimReceipt.EffectiveGasPrice)
 		resolveFee := new(big.Int).Mul(new(big.Int).SetUint64(resolveReceipt.GasUsed), resolveReceipt.EffectiveGasPrice)
 		fees = new(big.Int).Add(fees, resolveClaimFee)
@@ -1211,6 +1213,18 @@ func TestFees(t *testing.T) {
 		cfg.DeployConfig.L2GenesisEcotoneTimeOffset = new(hexutil.Uint64)
 		testFees(t, cfg)
 	})
+	t.Run("fjord", func(t *testing.T) {
+		InitParallel(t)
+		cfg := DefaultSystemConfig(t)
+		cfg.DeployConfig.L1GenesisBlockBaseFeePerGas = (*hexutil.Big)(big.NewInt(7))
+
+		cfg.DeployConfig.L2GenesisRegolithTimeOffset = new(hexutil.Uint64)
+		cfg.DeployConfig.L2GenesisCanyonTimeOffset = new(hexutil.Uint64)
+		cfg.DeployConfig.L2GenesisDeltaTimeOffset = new(hexutil.Uint64)
+		cfg.DeployConfig.L2GenesisEcotoneTimeOffset = new(hexutil.Uint64)
+		cfg.DeployConfig.L2GenesisFjordTimeOffset = new(hexutil.Uint64)
+		testFees(t, cfg)
+	})
 }
 
 func testFees(t *testing.T, cfg SystemConfig) {
@@ -1254,7 +1268,8 @@ func testFees(t *testing.T, cfg SystemConfig) {
 
 		scalar, err := gpoContract.Scalar(&bind.CallOpts{})
 		require.Nil(t, err, "reading gpo scalar")
-		require.Equal(t, scalar.Uint64(), cfg.DeployConfig.GasPriceOracleScalar, "wrong gpo scalar")
+		feeScalar := cfg.DeployConfig.FeeScalar()
+		require.Equal(t, scalar, new(big.Int).SetBytes(feeScalar[:]), "wrong gpo scalar")
 	} else {
 		_, err := gpoContract.Overhead(&bind.CallOpts{})
 		require.ErrorContains(t, err, "deprecated")
@@ -1337,7 +1352,7 @@ func testFees(t *testing.T, cfg SystemConfig) {
 
 	// Tally BaseFee
 	baseFee := new(big.Int).Mul(header.BaseFee, new(big.Int).SetUint64(receipt.GasUsed))
-	require.Equal(t, baseFee, baseFeeRecipientDiff, "base fee fee mismatch")
+	require.Equal(t, baseFee, baseFeeRecipientDiff, "base fee mismatch")
 
 	// Tally L1 Fee
 	tx, _, err := l2Seq.TransactionByHash(context.Background(), receipt.TxHash)
@@ -1352,11 +1367,25 @@ func testFees(t *testing.T, cfg SystemConfig) {
 	require.NoError(t, err)
 	require.Equal(t, sys.RollupConfig.IsEcotone(header.Time), gpoEcotone, "GPO and chain must have same ecotone view")
 
+	gpoFjord, err := gpoContract.IsFjord(nil)
+	require.NoError(t, err)
+	require.Equal(t, sys.RollupConfig.IsFjord(header.Time), gpoFjord, "GPO and chain must have same fjord view")
+
 	gpoL1Fee, err := gpoContract.GetL1Fee(&bind.CallOpts{}, bytes)
 	require.Nil(t, err)
 
 	adjustedGPOFee := gpoL1Fee
-	if sys.RollupConfig.IsRegolith(header.Time) {
+	if sys.RollupConfig.IsFjord(header.Time) {
+		// The fastlz size of the transaction is 102 bytes
+		require.Equal(t, uint64(102), tx.RollupCostData().FastLzSize)
+		// Which results in both the fjord cost function and GPO using the minimum value for the fastlz regression:
+		// Geth Linear Regression: -42.5856 + 102 * 0.8365 = 42.7374
+		// GPO Linear Regression: -42.5856 + 170 * 0.8365 = 99.6194
+		// The additional 68 (170 vs. 102) is due to the GPO adding 68 bytes to account for the signature.
+		require.Greater(t, types.MinTransactionSize.Uint64(), uint64(99))
+		// Because of this, we don't need to do any adjustment as the GPO and cost func are both bounded to the minimum value.
+		// However, if the fastlz regression output is ever larger than the minimum, this will require an adjustment.
+	} else if sys.RollupConfig.IsRegolith(header.Time) {
 		// if post-regolith, adjust the GPO fee by removing the overhead it adds because of signature data
 		artificialGPOOverhead := big.NewInt(68 * 16) // it adds 68 bytes to cover signature and RLP data
 		l1BaseFee := big.NewInt(7)                   // we assume the L1 basefee is the minimum, 7

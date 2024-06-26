@@ -69,12 +69,12 @@ type Service struct {
 }
 
 // NewService creates a new Service.
-func NewService(ctx context.Context, logger log.Logger, cfg *config.Config) (*Service, error) {
+func NewService(ctx context.Context, logger log.Logger, cfg *config.Config, m metrics.Metricer) (*Service, error) {
 	s := &Service{
 		systemClock: clock.SystemClock,
 		l1Clock:     clock.NewSimpleClock(),
 		logger:      logger,
-		metrics:     metrics.NewMetrics(),
+		metrics:     m,
 	}
 
 	if err := s.initFromConfig(ctx, cfg); err != nil {
@@ -280,6 +280,11 @@ func (s *Service) Stop(ctx context.Context) error {
 	}
 	if s.monitor != nil {
 		s.monitor.StopMonitoring()
+	}
+	if s.claimer != nil {
+		if err := s.claimer.Close(); err != nil {
+			result = errors.Join(result, fmt.Errorf("failed to close claimer: %w", err))
+		}
 	}
 	if s.faultGamesCloser != nil {
 		s.faultGamesCloser()

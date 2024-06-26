@@ -10,8 +10,8 @@ import (
 
 	"github.com/ethereum-optimism/optimism/cannon/mipsevm"
 	"github.com/ethereum-optimism/optimism/op-challenger/config"
-	"github.com/ethereum-optimism/optimism/op-challenger/game/fault/trace/cannon"
 	"github.com/ethereum-optimism/optimism/op-challenger/game/fault/trace/utils"
+	"github.com/ethereum-optimism/optimism/op-challenger/game/fault/trace/vm"
 	"github.com/ethereum-optimism/optimism/op-challenger/metrics"
 	op_e2e "github.com/ethereum-optimism/optimism/op-e2e"
 	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils/challenger"
@@ -135,24 +135,28 @@ func TestPrecompiles(t *testing.T) {
 	}
 }
 
-func runCannon(t *testing.T, ctx context.Context, sys *op_e2e.System, inputs utils.LocalGameInputs, l2Node string) {
+func runCannon(t *testing.T, ctx context.Context, sys *op_e2e.System, inputs utils.LocalGameInputs, l2Node string, extraVmArgs ...string) {
 	l1Endpoint := sys.NodeEndpoint("l1")
 	l1Beacon := sys.L1BeaconEndpoint()
-	cannonOpts := challenger.WithCannon(t, sys.RollupCfg(), sys.L2Genesis(), sys.RollupEndpoint(l2Node), sys.NodeEndpoint(l2Node))
+	rollupEndpoint := sys.RollupEndpoint("sequencer")
+	l2Endpoint := sys.NodeEndpoint("sequencer")
+	cannonOpts := challenger.WithCannon(t, sys.RollupCfg(), sys.L2Genesis())
 	dir := t.TempDir()
 	proofsDir := filepath.Join(dir, "cannon-proofs")
-	cfg := config.NewConfig(common.Address{}, l1Endpoint, l1Beacon, dir)
+	cfg := config.NewConfig(common.Address{}, l1Endpoint, l1Beacon, rollupEndpoint, l2Endpoint, dir)
 	cannonOpts(&cfg)
 
 	logger := testlog.Logger(t, log.LevelInfo).New("role", "cannon")
-	executor := cannon.NewExecutor(logger, metrics.NoopMetrics, &cfg, inputs)
+	executor := vm.NewExecutor(logger, metrics.NoopMetrics, cfg.Cannon, cfg.CannonAbsolutePreState, inputs)
 
 	t.Log("Running cannon")
-	err := executor.GenerateProof(ctx, proofsDir, math.MaxUint)
+	err := executor.DoGenerateProof(ctx, proofsDir, math.MaxUint, math.MaxUint, extraVmArgs...)
 	require.NoError(t, err, "failed to generate proof")
 
 	state, err := parseState(filepath.Join(proofsDir, "final.json.gz"))
 	require.NoError(t, err, "failed to parse state")
+	require.True(t, state.Exited, "cannon did not exit")
+	require.Zero(t, state.ExitCode, "cannon failed with exit code %d", state.ExitCode)
 	t.Logf("Completed in %d steps", state.Step)
 }
 

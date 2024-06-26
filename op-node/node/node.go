@@ -8,11 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ethereum-optimism/optimism/op-node/node/safedb"
-	"github.com/ethereum-optimism/optimism/op-node/rollup/derive"
-	plasma "github.com/ethereum-optimism/optimism/op-plasma"
-	"github.com/ethereum-optimism/optimism/op-service/httputil"
-
 	"github.com/hashicorp/go-multierror"
 	"github.com/libp2p/go-libp2p/core/peer"
 
@@ -22,13 +17,17 @@ import (
 
 	"github.com/ethereum-optimism/optimism/op-node/heartbeat"
 	"github.com/ethereum-optimism/optimism/op-node/metrics"
+	"github.com/ethereum-optimism/optimism/op-node/node/safedb"
 	"github.com/ethereum-optimism/optimism/op-node/p2p"
+	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/conductor"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/driver"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/sync"
 	"github.com/ethereum-optimism/optimism/op-node/version"
+	plasma "github.com/ethereum-optimism/optimism/op-plasma"
 	"github.com/ethereum-optimism/optimism/op-service/client"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
+	"github.com/ethereum-optimism/optimism/op-service/httputil"
 	"github.com/ethereum-optimism/optimism/op-service/oppprof"
 	"github.com/ethereum-optimism/optimism/op-service/retry"
 	"github.com/ethereum-optimism/optimism/op-service/sources"
@@ -37,7 +36,7 @@ import (
 var ErrAlreadyClosed = errors.New("node is already closed")
 
 type closableSafeDB interface {
-	derive.SafeHeadListener
+	rollup.SafeHeadListener
 	SafeDBReader
 	io.Closer
 }
@@ -175,7 +174,7 @@ func (n *OpNode) initL1(ctx context.Context, cfg *Config) error {
 	rpcCfg.EthClientConfig.RethDBPath = cfg.RethDBPath
 
 	n.l1Source, err = sources.NewL1Client(
-		client.NewInstrumentedRPC(l1Node, n.metrics), n.log, n.metrics.L1SourceCache, rpcCfg)
+		client.NewInstrumentedRPC(l1Node, &n.metrics.RPCMetrics.RPCClientMetrics), n.log, n.metrics.L1SourceCache, rpcCfg)
 	if err != nil {
 		return fmt.Errorf("failed to create L1 source: %w", err)
 	}
@@ -371,7 +370,7 @@ func (n *OpNode) initL2(ctx context.Context, cfg *Config, snapshotLog log.Logger
 	}
 
 	n.l2Source, err = sources.NewEngineClient(
-		client.NewInstrumentedRPC(rpcClient, n.metrics), n.log, n.metrics.L2SourceCache, rpcCfg,
+		client.NewInstrumentedRPC(rpcClient, &n.metrics.RPCClientMetrics), n.log, n.metrics.L2SourceCache, rpcCfg,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create Engine client: %w", err)
@@ -387,7 +386,7 @@ func (n *OpNode) initL2(ctx context.Context, cfg *Config, snapshotLog log.Logger
 	}
 
 	// if plasma is not explicitly activated in the node CLI, the config + any error will be ignored.
-	rpCfg, err := cfg.Rollup.PlasmaConfig()
+	rpCfg, err := cfg.Rollup.GetOPPlasmaConfig()
 	if cfg.Plasma.Enabled && err != nil {
 		return fmt.Errorf("failed to get plasma config: %w", err)
 	}
@@ -583,7 +582,8 @@ func (n *OpNode) OnUnsafeL2Payload(ctx context.Context, from peer.ID, envelope *
 
 	n.tracer.OnUnsafeL2Payload(ctx, from, envelope)
 
-	n.log.Info("Received signed execution payload from p2p", "id", envelope.ExecutionPayload.ID(), "peer", from)
+	n.log.Info("Received signed execution payload from p2p", "id", envelope.ExecutionPayload.ID(), "peer", from,
+		"txs", len(envelope.ExecutionPayload.Transactions))
 
 	// Pass on the event to the L2 Engine
 	ctx, cancel := context.WithTimeout(ctx, time.Second*30)
