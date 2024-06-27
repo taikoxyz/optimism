@@ -318,12 +318,7 @@ func (m *SimpleTxManager) craftTx(ctx context.Context, candidate TxCandidate) (*
 
 	accessList := &types.AccessList{}
 	if includeAccessList {
-		for _, tuple := range *providedAccessList {
-			// Ignore empty storage keys to save more gas
-			if len(tuple.StorageKeys) > 0 {
-				*accessList = append(*accessList, tuple)
-			}
-		}
+		accessList = providedAccessList
 	}
 
 	var txMessage types.TxData
