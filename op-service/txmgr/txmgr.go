@@ -274,9 +274,8 @@ func (m *SimpleTxManager) craftTx(ctx context.Context, candidate TxCandidate) (*
 		Data:      candidate.TxData,
 		Value:     candidate.Value,
 	}
-	//  Set includeAccessList as default
-	includeAccessList := true
-	providedAccessList, gasUsed, _, err := m.backend.CreateAccessList(ctx, callArgs)
+
+	accessList, _, _, err := m.backend.CreateAccessList(ctx, callArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -299,9 +298,6 @@ func (m *SimpleTxManager) craftTx(ctx context.Context, candidate TxCandidate) (*
 		if err != nil {
 			return nil, fmt.Errorf("failed to estimate gas: %w", errutil.TryAddRevertReason(err))
 		}
-		if gasUsed >= gas {
-			includeAccessList = false
-		}
 		gasLimit = gas
 	}
 
@@ -314,11 +310,6 @@ func (m *SimpleTxManager) craftTx(ctx context.Context, candidate TxCandidate) (*
 		if sidecar, blobHashes, err = MakeSidecar(candidate.Blobs); err != nil {
 			return nil, fmt.Errorf("failed to make sidecar: %w", err)
 		}
-	}
-
-	accessList := &types.AccessList{}
-	if includeAccessList {
-		accessList = providedAccessList
 	}
 
 	var txMessage types.TxData
