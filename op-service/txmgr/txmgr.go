@@ -796,15 +796,21 @@ func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transa
 		return nil, err
 	}
 
-	// Re-estimate gaslimit in case things have changed or a previous gaslimit estimate was wrong
-	gas, err := m.backend.EstimateGas(ctx, ethereum.CallMsg{
+	callArgs := ethereum.CallMsg{
 		From:      m.cfg.From,
 		To:        tx.To(),
 		GasTipCap: bumpedTip,
 		GasFeeCap: bumpedFee,
 		Data:      tx.Data(),
 		Value:     tx.Value(),
-	})
+	}
+
+	if tx.Type() == types.BlobTxType {
+		callArgs.BlobHashes = append(callArgs.BlobHashes, tx.BlobHashes()...)
+	}
+
+	// Re-estimate gaslimit in case things have changed or a previous gaslimit estimate was wrong
+	gas, err := m.backend.EstimateGas(ctx, callArgs)
 	if err != nil {
 		// If this is a transaction resubmission, we sometimes see this outcome because the
 		// original tx can get included in a block just before the above call. In this case the
@@ -812,6 +818,8 @@ func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transa
 		// expected block number"
 		m.l.Warn("failed to re-estimate gas", "err", err, "tx", tx.Hash(), "gaslimit", tx.Gas(),
 			"gasFeeCap", bumpedFee, "gasTipCap", bumpedTip)
+		// CHANGE(taiko): If we can't estimate gas (mainly for blob transactions),
+		// we should just use the gas limit from the original transaction.
 		return nil, err
 	}
 	if tx.Gas() != gas {

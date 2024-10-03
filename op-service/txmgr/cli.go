@@ -237,9 +237,6 @@ func (m CLIConfig) Check() error {
 	if m.L1RPCURL == "" {
 		return errors.New("must provide a L1 RPC url")
 	}
-	if m.NumConfirmations == 0 {
-		return errors.New("NumConfirmations must not be 0")
-	}
 	if m.NetworkTimeout == 0 {
 		return errors.New("must provide NetworkTimeout")
 	}
@@ -427,9 +424,6 @@ type Config struct {
 func (m *Config) Check() error {
 	if m.Backend == nil {
 		return errors.New("must provide the Backend")
-	}
-	if m.NumConfirmations == 0 {
-		return errors.New("NumConfirmations must not be 0")
 	}
 	if m.NetworkTimeout == 0 {
 		return errors.New("must provide NetworkTimeout")
