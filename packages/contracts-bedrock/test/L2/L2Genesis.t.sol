@@ -150,8 +150,8 @@ contract L2GenesisTest is Test {
         // 2 predeploys do not have proxies
         assertEq(getCodeCount(_path, "Proxy.sol:Proxy"), Predeploys.PREDEPLOY_COUNT - 2);
 
-        // 23 proxies have the implementation set if useInterop is true and 17 if useInterop is false
-        assertEq(getPredeployCountWithSlotSet(_path, Constants.PROXY_IMPLEMENTATION_ADDRESS), _useInterop ? 23 : 17);
+        // 24 proxies have the implementation set if useInterop is true and 17 if useInterop is false
+        assertEq(getPredeployCountWithSlotSet(_path, Constants.PROXY_IMPLEMENTATION_ADDRESS), _useInterop ? 24 : 17);
 
         // All proxies except 2 have the proxy 1967 admin slot set to the proxy admin
         assertEq(
@@ -170,7 +170,7 @@ contract L2GenesisTest is Test {
     }
 
     /// @notice Creates mock L1Dependencies for testing purposes.
-    function _dummyL1Deps() internal pure returns (L1Dependencies memory _deps) {
+    function _dummyL1Deps() internal pure returns (L1Dependencies memory deps_) {
         return L1Dependencies({
             l1CrossDomainMessengerProxy: payable(address(0x100000)),
             l1StandardBridgeProxy: payable(address(0x100001)),

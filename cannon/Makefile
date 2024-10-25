@@ -21,6 +21,10 @@ cannon32-impl:
 cannon64-impl:
 	env GO111MODULE=on GOOS=$(TARGETOS) GOARCH=$(TARGETARCH) go build --tags=cannon64 -v $(LDFLAGS) -o ./bin/cannon64-impl .
 
+# Note: This target is used by ./scripts/build-legacy-cannons.sh
+# It should build the individual versions of cannons and copy them into place in hte multicannon/embeds directory
+# Ideally, preserve backwards compatibility with this behaviour but if it needs to change, build-legacy-cannons.sh will
+# need to be updated to account for different behaviours in different versions.
 cannon-embeds: cannon32-impl cannon64-impl
 	# singlethreaded-v2
 	@cp bin/cannon32-impl ./multicannon/embeds/cannon-2
@@ -39,7 +43,7 @@ elf:
 	make -C ./testdata/example elf
 
 sanitize-program:
-	@if ! { mips-linux-gnu-objdump -d -j .text $$GUEST_PROGRAM | awk '{print $3}' | grep -Ew -m1 '(bgezal|bltzal)'; }; then \
+	@if ! { mips-linux-gnu-objdump -d -j .text $$GUEST_PROGRAM | awk '{print $3}' | grep -Ew -m1 '(bltzal)'; }; then \
 		echo "guest program is sanitized for unsupported instructions"; \
 	else \
 		echo "found unsupported instructions in the guest program"; \

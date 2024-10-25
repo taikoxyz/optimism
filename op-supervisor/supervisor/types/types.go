@@ -6,19 +6,47 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"strconv"
 
 	"github.com/holiman/uint256"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+
+	"github.com/ethereum-optimism/optimism/op-service/eth"
 )
 
+// ChainIndex represents the lifetime of a chain in a dependency set.
+type ChainIndex uint32
+
+func (ci ChainIndex) String() string {
+	return strconv.FormatUint(uint64(ci), 10)
+}
+
+func (ci ChainIndex) MarshalText() ([]byte, error) {
+	return []byte(ci.String()), nil
+}
+
+func (ci *ChainIndex) UnmarshalText(data []byte) error {
+	v, err := strconv.ParseUint(string(data), 10, 32)
+	if err != nil {
+		return err
+	}
+	*ci = ChainIndex(v)
+	return nil
+}
+
 type ExecutingMessage struct {
-	Chain     uint32 // same as ChainID for now, but will be indirect, i.e. translated to full ID, later
+	Chain     ChainIndex // same as ChainID for now, but will be indirect, i.e. translated to full ID, later
 	BlockNum  uint64
 	LogIdx    uint32
 	Timestamp uint64
 	Hash      common.Hash
+}
+
+func (s *ExecutingMessage) String() string {
+	return fmt.Sprintf("ExecMsg(chainIndex: %s, block: %d, log: %d, time: %d, logHash: %s)",
+		s.Chain, s.BlockNum, s.LogIdx, s.Timestamp, s.Hash)
 }
 
 type Message struct {
@@ -159,4 +187,67 @@ func (id ChainID) ToUInt32() (uint32, error) {
 		return 0, fmt.Errorf("ChainID too large for uint32: %v", id)
 	}
 	return uint32(v64), nil
+}
+
+func (id ChainID) MarshalText() ([]byte, error) {
+	return []byte(id.String()), nil
+}
+
+func (id *ChainID) UnmarshalText(data []byte) error {
+	var x uint256.Int
+	err := x.UnmarshalText(data)
+	if err != nil {
+		return err
+	}
+	*id = ChainID(x)
+	return nil
+}
+
+func (id ChainID) Cmp(other ChainID) int {
+	return (*uint256.Int)(&id).Cmp((*uint256.Int)(&other))
+}
+
+type ReferenceView struct {
+	Local eth.BlockID `json:"local"`
+	Cross eth.BlockID `json:"cross"`
+}
+
+func (v ReferenceView) String() string {
+	return fmt.Sprintf("View(local: %s, cross: %s)", v.Local, v.Cross)
+}
+
+type BlockSeal struct {
+	Hash      common.Hash
+	Number    uint64
+	Timestamp uint64
+}
+
+func (s BlockSeal) String() string {
+	return fmt.Sprintf("BlockSeal(hash:%s, number:%d, time:%d)", s.Hash, s.Number, s.Timestamp)
+}
+
+func (s BlockSeal) ID() eth.BlockID {
+	return eth.BlockID{Hash: s.Hash, Number: s.Number}
+}
+
+func (s BlockSeal) WithParent(parent eth.BlockID) eth.BlockRef {
+	// prevent parent attachment if the parent is not the previous block,
+	// and the block is not the genesis block
+	if s.Number != parent.Number+1 && s.Number != 0 {
+		panic(fmt.Errorf("invalid parent block %s to combine with %s", parent, s))
+	}
+	return eth.BlockRef{
+		Hash:       s.Hash,
+		Number:     s.Number,
+		ParentHash: parent.Hash,
+		Time:       s.Timestamp,
+	}
+}
+
+func BlockSealFromRef(ref eth.BlockRef) BlockSeal {
+	return BlockSeal{
+		Hash:      ref.Hash,
+		Number:    ref.Number,
+		Timestamp: ref.Time,
+	}
 }
