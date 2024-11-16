@@ -383,7 +383,6 @@ func (m *SimpleTxManager) craftTx(ctx context.Context, candidate TxCandidate) (*
 	if (gas > gasLimit) {
 		return nil, fmt.Errorf("estimated gas is higher than the gasLimit: %w", "ESTIMATED GAS HIGHER THAN LIMIT")
 	}
-	gasLimit = gas
 
 	var txMessage types.TxData
 	if sidecar != nil {
