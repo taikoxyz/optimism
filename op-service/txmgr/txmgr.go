@@ -364,26 +364,26 @@ func (m *SimpleTxManager) craftTx(ctx context.Context, candidate TxCandidate) (*
 	}
 
 	// If the gas limit is set, we can use that as the gas
-	if gasLimit == 0 {
-		// Calculate the intrinsic gas for the transaction
-		callMsg := ethereum.CallMsg{
-			From:      m.cfg.From,
-			To:        candidate.To,
-			GasTipCap: gasTipCap,
-			GasFeeCap: gasFeeCap,
-			Data:      candidate.TxData,
-			Value:     candidate.Value,
-		}
-		if len(blobHashes) > 0 {
-			callMsg.BlobGasFeeCap = blobBaseFee
-			callMsg.BlobHashes = blobHashes
-		}
-		gas, err := m.backend.EstimateGas(ctx, callMsg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to estimate gas: %w", errutil.TryAddRevertReason(err))
-		}
-		gasLimit = gas
+	callMsg := ethereum.CallMsg{
+		From:      m.cfg.From,
+		To:        candidate.To,
+		GasTipCap: gasTipCap,
+		GasFeeCap: gasFeeCap,
+		Data:      candidate.TxData,
+		Value:     candidate.Value,
 	}
+	if len(blobHashes) > 0 {
+		callMsg.BlobGasFeeCap = blobBaseFee
+		callMsg.BlobHashes = blobHashes
+	}
+	gas, err := m.backend.EstimateGas(ctx, callMsg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to estimate gas: %w", errutil.TryAddRevertReason(err))
+	}
+	if (gas > gasLimit) {
+		return nil, fmt.Errorf("estimated gas is higher than the gasLimit: %w", "ESTIMATED GAS HIGHER THAN LIMIT")
+	}
+	gasLimit = gas
 
 	var txMessage types.TxData
 	if sidecar != nil {
@@ -785,6 +785,9 @@ func (m *SimpleTxManager) queryReceipt(ctx context.Context, txHash common.Hash, 
 // multiple of the suggested values.
 func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transaction) (*types.Transaction, error) {
 	m.txLogger(tx, true).Info("bumping gas price for transaction")
+	if true {
+		return nil, fmt.Errorf("fee bumps not allowed: %w", "FEE BUMP not allowed")
+	}
 	tip, baseFee, blobBaseFee, err := m.SuggestGasPriceCaps(ctx)
 	if err != nil {
 		m.txLogger(tx, false).Warn("failed to get suggested gas tip and base fee", "err", err)
