@@ -318,6 +318,39 @@ func (m *SimpleTxManager) SendAsync(ctx context.Context, candidate TxCandidate, 
 	}()
 }
 
+func (m *SimpleTxManager) SendAsyncWithoutChannel(ctx context.Context, candidate TxCandidate) {
+	// refuse new requests if the tx manager is closed
+	if m.closed.Load() {
+		return
+	}
+
+	m.metr.RecordPendingTx(m.pending.Add(1))
+
+	var cancel context.CancelFunc
+	if m.cfg.TxSendTimeout == 0 {
+		ctx, cancel = context.WithCancel(ctx)
+	} else {
+		ctx, cancel = context.WithTimeout(ctx, m.cfg.TxSendTimeout)
+	}
+
+	tx, err := m.prepare(ctx, candidate)
+	if err != nil {
+		m.resetNonce()
+		cancel()
+		m.metr.RecordPendingTx(m.pending.Add(-1))
+		return
+	}
+
+	go func() {
+		defer m.metr.RecordPendingTx(m.pending.Add(-1))
+		defer cancel()
+		receipt, err := m.sendTx(ctx, tx)
+		if err != nil {
+			m.resetNonce()
+		}
+	}()
+}
+
 // prepare prepares the transaction for sending.
 func (m *SimpleTxManager) prepare(ctx context.Context, candidate TxCandidate) (*types.Transaction, error) {
 	tx, err := retry.Do(ctx, 30, retry.Fixed(2*time.Second), func() (*types.Transaction, error) {
