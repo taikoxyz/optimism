@@ -538,6 +538,10 @@ func (m *SimpleTxManager) signWithNextNonce(ctx context.Context, txMessage types
 
 // resetNonce resets the internal nonce tracking. This is called if any pending send
 // returns an error.
+func (m *SimpleTxManager) ResetNonce() {
+	m.resetNonce()
+}
+
 func (m *SimpleTxManager) resetNonce() {
 	m.nonceLock.Lock()
 	defer m.nonceLock.Unlock()
