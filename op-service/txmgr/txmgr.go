@@ -344,7 +344,7 @@ func (m *SimpleTxManager) SendAsyncWithoutChannel(ctx context.Context, candidate
 	go func() {
 		defer m.metr.RecordPendingTx(m.pending.Add(-1))
 		defer cancel()
-		receipt, err := m.sendTx(ctx, tx)
+		_, err := m.sendTx(ctx, tx)
 		if err != nil {
 			m.resetNonce()
 		}
