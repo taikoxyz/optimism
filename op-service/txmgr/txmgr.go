@@ -414,7 +414,8 @@ func (m *SimpleTxManager) craftTx(ctx context.Context, candidate TxCandidate) (*
 		return nil, fmt.Errorf("failed to estimate gas: %w", errutil.TryAddRevertReason(err))
 	}
 	if (gas > gasLimit) {
-		return nil, fmt.Errorf("estimated gas is higher than the gasLimit: %w", "ESTIMATED GAS HIGHER THAN LIMIT")
+		m.l.Info("gas limit exceeded", "estimated gas", gas, "gas limit", gasLimit)
+		return nil, fmt.Errorf("estimated gas %d is higher than the gasLimit: %d", gas, gasLimit)
 	}
 
 	var txMessage types.TxData
