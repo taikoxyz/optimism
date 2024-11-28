@@ -872,6 +872,7 @@ func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transa
 		// what was originally specified.
 		return nil, fmt.Errorf("estimated gas %d is higher than the gasLimit: %d", gas, tx.Gas())
 	}
+	gas = tx.Gas()
 
 	var newTx *types.Transaction
 	if tx.Type() == types.BlobTxType {
