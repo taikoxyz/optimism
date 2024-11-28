@@ -822,9 +822,6 @@ func (m *SimpleTxManager) queryReceipt(ctx context.Context, txHash common.Hash, 
 // multiple of the suggested values.
 func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transaction) (*types.Transaction, error) {
 	m.txLogger(tx, true).Info("bumping gas price for transaction")
-	if true {
-		return nil, fmt.Errorf("fee bumps not allowed: %w", "FEE BUMP not allowed")
-	}
 	tip, baseFee, blobBaseFee, err := m.SuggestGasPriceCaps(ctx)
 	if err != nil {
 		m.txLogger(tx, false).Warn("failed to get suggested gas tip and base fee", "err", err)
@@ -873,7 +870,7 @@ func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transa
 	if tx.Gas() > gas {
 		// Don't bump the gas limit down if the passed-in gas limit is higher than
 		// what was originally specified.
-		gas = tx.Gas()
+		return nil, fmt.Errorf("estimated gas %d is higher than the gasLimit: %d", gas, tx.Gas())
 	}
 
 	var newTx *types.Transaction
