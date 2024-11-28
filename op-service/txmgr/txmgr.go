@@ -867,7 +867,7 @@ func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transa
 			"gasFeeCap", bumpedFee, "gasTipCap", bumpedTip)
 	}
 
-	if tx.Gas() > gas {
+	if tx.Gas() < gas {
 		// Don't bump the gas limit down if the passed-in gas limit is higher than
 		// what was originally specified.
 		return nil, fmt.Errorf("estimated gas %d is higher than the gasLimit: %d", gas, tx.Gas())
