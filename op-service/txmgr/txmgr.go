@@ -827,11 +827,8 @@ func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transa
 		m.txLogger(tx, false).Warn("failed to get suggested gas tip and base fee", "err", err)
 		return nil, err
 	}
-	bumpedTip, bumpedFee := updateFees(tx.GasTipCap(), tx.GasFeeCap(), tip, baseFee, tx.Type() == types.BlobTxType, m.l)
-
-	if err := m.checkLimits(tip, baseFee, bumpedTip, bumpedFee); err != nil {
-		return nil, err
-	}
+	minTipCap := m.cfg.MinTipCap.Load()
+	bumpedTip, bumpedFee := updateFees(minTipCap, tx.GasTipCap(), tx.GasFeeCap(), tip, baseFee, tx.Type() == types.BlobTxType, m.l)
 
 	callArgs := ethereum.CallMsg{
 		From:      m.cfg.From,
@@ -1022,30 +1019,33 @@ func calcThresholdValue(x *big.Int, isBlobTx bool) *big.Int {
 //	(a) each satisfies geth's required tx-replacement fee bumps, and
 //	(b) gasTipCap is no less than new tip, and
 //	(c) gasFeeCap is no less than calcGasFee(newBaseFee, newTip)
-func updateFees(oldTip, oldFeeCap, newTip, newBaseFee *big.Int, isBlobTx bool, lgr log.Logger) (*big.Int, *big.Int) {
+func updateFees(minTipCap, oldTip, oldFeeCap, newTip, newBaseFee *big.Int, isBlobTx bool, lgr log.Logger) (*big.Int, *big.Int) {
 	newFeeCap := calcGasFeeCap(newBaseFee, newTip)
 	lgr = lgr.New("old_gasTipCap", oldTip, "old_gasFeeCap", oldFeeCap,
 		"new_gasTipCap", newTip, "new_gasFeeCap", newFeeCap, "new_baseFee", newBaseFee)
 	thresholdTip := calcThresholdValue(oldTip, isBlobTx)
 	thresholdFeeCap := calcThresholdValue(oldFeeCap, isBlobTx)
+	if minTipCap != nil {
+		thresholdTip = minTipCap
+	}
 	if newTip.Cmp(thresholdTip) >= 0 && newFeeCap.Cmp(thresholdFeeCap) >= 0 {
 		lgr.Debug("Using new tip and feecap")
-		return thresholdTip, newFeeCap.Add(newFeeCap, newFeeCap)
+		return thresholdTip, newFeeCap.Add(newFeeCap, thresholdFeeCap)
 	} else if newTip.Cmp(thresholdTip) >= 0 && newFeeCap.Cmp(thresholdFeeCap) < 0 {
 		// Tip has gone up, but base fee is flat or down.
 		// TODO: Do we need to recalculate the FC here?
 		lgr.Debug("Using new tip and threshold feecap")
-		return thresholdTip, thresholdFeeCap.Add(thresholdFeeCap, thresholdFeeCap)
+		return thresholdTip, thresholdFeeCap.Add(thresholdFeeCap, newFeeCap)
 	} else if newTip.Cmp(thresholdTip) < 0 && newFeeCap.Cmp(thresholdFeeCap) >= 0 {
 		// Base fee has gone up, but the tip hasn't. Recalculate the feecap because if the tip went up a lot
 		// not enough of the feecap may be dedicated to paying the base fee.
 		lgr.Debug("Using threshold tip and recalculated feecap")
-		return thresholdTip, calcGasFeeCap(newBaseFee, thresholdTip)
+		return thresholdTip, newFeeCap.Add(newFeeCap, thresholdFeeCap)
 
 	} else {
 		// TODO: Should we skip the bump in this case?
 		lgr.Debug("Using threshold tip and threshold feecap")
-		return thresholdTip, thresholdFeeCap
+		return thresholdTip, newFeeCap.Add(newFeeCap, thresholdFeeCap)
 	}
 }
 
