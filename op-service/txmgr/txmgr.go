@@ -1030,12 +1030,12 @@ func updateFees(oldTip, oldFeeCap, newTip, newBaseFee *big.Int, isBlobTx bool, l
 	thresholdFeeCap := calcThresholdValue(oldFeeCap, isBlobTx)
 	if newTip.Cmp(thresholdTip) >= 0 && newFeeCap.Cmp(thresholdFeeCap) >= 0 {
 		lgr.Debug("Using new tip and feecap")
-		return newTip, newFeeCap
+		return thresholdTip, newFeeCap.Add(newFeeCap, newFeeCap)
 	} else if newTip.Cmp(thresholdTip) >= 0 && newFeeCap.Cmp(thresholdFeeCap) < 0 {
 		// Tip has gone up, but base fee is flat or down.
 		// TODO: Do we need to recalculate the FC here?
 		lgr.Debug("Using new tip and threshold feecap")
-		return newTip, thresholdFeeCap
+		return thresholdTip, thresholdFeeCap.Add(thresholdFeeCap, thresholdFeeCap)
 	} else if newTip.Cmp(thresholdTip) < 0 && newFeeCap.Cmp(thresholdFeeCap) >= 0 {
 		// Base fee has gone up, but the tip hasn't. Recalculate the feecap because if the tip went up a lot
 		// not enough of the feecap may be dedicated to paying the base fee.
