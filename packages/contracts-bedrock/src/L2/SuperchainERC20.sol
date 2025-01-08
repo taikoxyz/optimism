@@ -1,21 +1,26 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.25;
 
-import { ICrosschainERC20 } from "src/L2/interfaces/ICrosschainERC20.sol";
-import { ISemver } from "src/universal/interfaces/ISemver.sol";
-import { Predeploys } from "src/libraries/Predeploys.sol";
+// Contracts
 import { ERC20 } from "@solady-v0.0.245/tokens/ERC20.sol";
+
+// Libraries
+import { Predeploys } from "src/libraries/Predeploys.sol";
 import { Unauthorized } from "src/libraries/errors/CommonErrors.sol";
 
+// Interfaces
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { ISemver } from "interfaces/universal/ISemver.sol";
+import { IERC7802, IERC165 } from "interfaces/L2/IERC7802.sol";
+
 /// @title SuperchainERC20
-/// @notice SuperchainERC20 is a standard extension of the base ERC20 token contract that unifies ERC20 token
-///         bridging to make it fungible across the Superchain. This construction allows the SuperchainTokenBridge to
-///         burn and mint tokens.
-abstract contract SuperchainERC20 is ERC20, ICrosschainERC20, ISemver {
+/// @notice A standard ERC20 extension implementing IERC7802 for unified cross-chain fungibility across
+///         the Superchain. Allows the SuperchainTokenBridge to mint and burn tokens as needed.
+abstract contract SuperchainERC20 is ERC20, IERC7802, ISemver {
     /// @notice Semantic version.
-    /// @custom:semver 1.0.0-beta.4
+    /// @custom:semver 1.0.0-beta.8
     function version() external view virtual returns (string memory) {
-        return "1.0.0-beta.4";
+        return "1.0.0-beta.8";
     }
 
     /// @notice Allows the SuperchainTokenBridge to mint tokens.
@@ -26,7 +31,7 @@ abstract contract SuperchainERC20 is ERC20, ICrosschainERC20, ISemver {
 
         _mint(_to, _amount);
 
-        emit CrosschainMint(_to, _amount);
+        emit CrosschainMint(_to, _amount, msg.sender);
     }
 
     /// @notice Allows the SuperchainTokenBridge to burn tokens.
@@ -37,6 +42,12 @@ abstract contract SuperchainERC20 is ERC20, ICrosschainERC20, ISemver {
 
         _burn(_from, _amount);
 
-        emit CrosschainBurn(_from, _amount);
+        emit CrosschainBurn(_from, _amount, msg.sender);
+    }
+
+    /// @inheritdoc IERC165
+    function supportsInterface(bytes4 _interfaceId) public view virtual returns (bool) {
+        return _interfaceId == type(IERC7802).interfaceId || _interfaceId == type(IERC20).interfaceId
+            || _interfaceId == type(IERC165).interfaceId;
     }
 }

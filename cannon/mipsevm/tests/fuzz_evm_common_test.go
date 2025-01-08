@@ -42,7 +42,7 @@ func FuzzStateSyscallBrk(f *testing.F) {
 				require.False(t, stepWitness.HasPreimage())
 
 				expected.Validate(t, state)
-				testutil.ValidateEVM(t, stepWitness, step, goVm, v.StateHashFn, v.Contracts, nil)
+				testutil.ValidateEVM(t, stepWitness, step, goVm, v.StateHashFn, v.Contracts)
 			})
 		}
 	})
@@ -97,7 +97,7 @@ func FuzzStateSyscallMmap(f *testing.F) {
 				require.False(t, stepWitness.HasPreimage())
 
 				expected.Validate(t, state)
-				testutil.ValidateEVM(t, stepWitness, step, goVm, v.StateHashFn, v.Contracts, nil)
+				testutil.ValidateEVM(t, stepWitness, step, goVm, v.StateHashFn, v.Contracts)
 			})
 		}
 	})
@@ -126,7 +126,7 @@ func FuzzStateSyscallExitGroup(f *testing.F) {
 				require.False(t, stepWitness.HasPreimage())
 
 				expected.Validate(t, state)
-				testutil.ValidateEVM(t, stepWitness, step, goVm, v.StateHashFn, v.Contracts, nil)
+				testutil.ValidateEVM(t, stepWitness, step, goVm, v.StateHashFn, v.Contracts)
 			})
 		}
 	})
@@ -157,7 +157,7 @@ func FuzzStateSyscallFcntl(f *testing.F) {
 						expected.Registers[2] = 0
 						expected.Registers[7] = 0
 					default:
-						expected.Registers[2] = 0xFF_FF_FF_FF
+						expected.Registers[2] = ^Word(0)
 						expected.Registers[7] = exec.MipsEBADF
 					}
 				} else if cmd == 3 {
@@ -169,11 +169,11 @@ func FuzzStateSyscallFcntl(f *testing.F) {
 						expected.Registers[2] = 1
 						expected.Registers[7] = 0
 					default:
-						expected.Registers[2] = 0xFF_FF_FF_FF
+						expected.Registers[2] = ^Word(0)
 						expected.Registers[7] = exec.MipsEBADF
 					}
 				} else {
-					expected.Registers[2] = 0xFF_FF_FF_FF
+					expected.Registers[2] = ^Word(0)
 					expected.Registers[7] = exec.MipsEINVAL
 				}
 
@@ -182,7 +182,7 @@ func FuzzStateSyscallFcntl(f *testing.F) {
 				require.False(t, stepWitness.HasPreimage())
 
 				expected.Validate(t, state)
-				testutil.ValidateEVM(t, stepWitness, step, goVm, v.StateHashFn, v.Contracts, nil)
+				testutil.ValidateEVM(t, stepWitness, step, goVm, v.StateHashFn, v.Contracts)
 			})
 		}
 	})
@@ -219,7 +219,7 @@ func FuzzStateHintRead(f *testing.F) {
 				require.False(t, stepWitness.HasPreimage())
 
 				expected.Validate(t, state)
-				testutil.ValidateEVM(t, stepWitness, step, goVm, v.StateHashFn, v.Contracts, nil)
+				testutil.ValidateEVM(t, stepWitness, step, goVm, v.StateHashFn, v.Contracts)
 			})
 		}
 	})
@@ -232,7 +232,7 @@ func FuzzStatePreimageRead(f *testing.F) {
 			t.Run(v.Name, func(t *testing.T) {
 				effAddr := addr & arch.AddressMask
 				pc = pc & arch.AddressMask
-				preexistingMemoryVal := [4]byte{0xFF, 0xFF, 0xFF, 0xFF}
+				preexistingMemoryVal := ^arch.Word(0)
 				preimageValue := []byte("hello world")
 				preimageData := testutil.AddPreimageLengthPrefix(preimageValue)
 				if preimageOffset >= Word(len(preimageData)) || pc == effAddr {
@@ -249,11 +249,11 @@ func FuzzStatePreimageRead(f *testing.F) {
 				state.GetRegistersRef()[5] = addr
 				state.GetRegistersRef()[6] = count
 				testutil.StoreInstruction(state.GetMemory(), state.GetPC(), syscallInsn)
-				state.GetMemory().SetWord(effAddr, arch.ByteOrderWord.Word(preexistingMemoryVal[:]))
+				state.GetMemory().SetWord(effAddr, preexistingMemoryVal)
 				step := state.GetStep()
 
 				alignment := addr & arch.ExtMask
-				writeLen := 4 - alignment
+				writeLen := arch.WordSizeBytes - alignment
 				if count < writeLen {
 					writeLen = count
 				}
@@ -272,7 +272,8 @@ func FuzzStatePreimageRead(f *testing.F) {
 				expected.PreimageOffset += writeLen
 				if writeLen > 0 {
 					// Expect a memory write
-					expectedMemory := preexistingMemoryVal
+					var expectedMemory []byte
+					expectedMemory = arch.ByteOrderWord.AppendWord(expectedMemory, preexistingMemoryVal)
 					copy(expectedMemory[alignment:], preimageData[preimageOffset:preimageOffset+writeLen])
 					expected.ExpectMemoryWriteWord(effAddr, arch.ByteOrderWord.Word(expectedMemory[:]))
 				}
@@ -282,7 +283,7 @@ func FuzzStatePreimageRead(f *testing.F) {
 				require.True(t, stepWitness.HasPreimage())
 
 				expected.Validate(t, state)
-				testutil.ValidateEVM(t, stepWitness, step, goVm, v.StateHashFn, v.Contracts, nil)
+				testutil.ValidateEVM(t, stepWitness, step, goVm, v.StateHashFn, v.Contracts)
 			})
 		}
 	})
@@ -364,7 +365,7 @@ func FuzzStateHintWrite(f *testing.F) {
 				// Validate
 				require.Equal(t, expectedHints, oracle.Hints())
 				expected.Validate(t, state)
-				testutil.ValidateEVM(t, stepWitness, step, goVm, v.StateHashFn, v.Contracts, nil)
+				testutil.ValidateEVM(t, stepWitness, step, goVm, v.StateHashFn, v.Contracts)
 			})
 		}
 	})
@@ -381,7 +382,7 @@ func FuzzStatePreimageWrite(f *testing.F) {
 					addr += 8
 				}
 				effAddr := addr & arch.AddressMask
-				preexistingMemoryVal := [4]byte{0x12, 0x34, 0x56, 0x78}
+				preexistingMemoryVal := [8]byte{0x12, 0x34, 0x56, 0x78, 0x87, 0x65, 0x43, 0x21}
 				preimageData := []byte("hello world")
 				preimageKey := preimage.Keccak256Key(crypto.Keccak256Hash(preimageData)).PreimageKey()
 				oracle := testutil.StaticOracle(t, preimageData)
@@ -399,7 +400,7 @@ func FuzzStatePreimageWrite(f *testing.F) {
 
 				expectBytesWritten := count
 				alignment := addr & arch.ExtMask
-				sz := 4 - alignment
+				sz := arch.WordSizeBytes - alignment
 				if sz < expectBytesWritten {
 					expectBytesWritten = sz
 				}
@@ -424,7 +425,7 @@ func FuzzStatePreimageWrite(f *testing.F) {
 				require.False(t, stepWitness.HasPreimage())
 
 				expected.Validate(t, state)
-				testutil.ValidateEVM(t, stepWitness, step, goVm, v.StateHashFn, v.Contracts, nil)
+				testutil.ValidateEVM(t, stepWitness, step, goVm, v.StateHashFn, v.Contracts)
 			})
 		}
 	})

@@ -6,6 +6,10 @@ variable "REPOSITORY" {
   default = "oplabs-tools-artifacts/images"
 }
 
+variable "KONA_VERSION" {
+  default = "kona-client-v0.1.0-beta.6"
+}
+
 variable "GIT_COMMIT" {
   default = "dev"
 }
@@ -119,6 +123,7 @@ target "op-challenger" {
     GIT_COMMIT = "${GIT_COMMIT}"
     GIT_DATE = "${GIT_DATE}"
     OP_CHALLENGER_VERSION = "${OP_CHALLENGER_VERSION}"
+    KONA_VERSION="${KONA_VERSION}"
   }
   target = "op-challenger-target"
   platforms = split(",", PLATFORMS)
@@ -206,12 +211,23 @@ target "proofs-tools" {
   dockerfile = "./ops/docker/proofs-tools/Dockerfile"
   context = "."
   args = {
-    CHALLENGER_VERSION="22d8365199b3141fcfbccc7cb9e107a71e151b0a"
-    KONA_VERSION="kona-client-v0.1.0-alpha.5"
+    CHALLENGER_VERSION="b46bffed42db3442d7484f089278d59f51503049"
+    KONA_VERSION="${KONA_VERSION}"
   }
   target="proofs-tools"
   platforms = split(",", PLATFORMS)
   tags = [for tag in split(",", IMAGE_TAGS) : "${REGISTRY}/${REPOSITORY}/proofs-tools:${tag}"]
+}
+
+target "holocene-deployer" {
+  dockerfile = "./packages/contracts-bedrock/scripts/upgrades/holocene/upgrade.dockerfile"
+  context = "./packages/contracts-bedrock/scripts/upgrades/holocene"
+  args = {
+    REV = "op-contracts/v1.8.0-rc.1"
+  }
+  target="holocene-deployer"
+  platforms = split(",", PLATFORMS)
+  tags = [for tag in split(",", IMAGE_TAGS) : "${REGISTRY}/${REPOSITORY}/holocene-deployer:${tag}"]
 }
 
 target "ci-builder" {
@@ -228,15 +244,6 @@ target "ci-builder-rust" {
   platforms = split(",", PLATFORMS)
   target="rust-builder"
   tags = [for tag in split(",", IMAGE_TAGS) : "${REGISTRY}/${REPOSITORY}/ci-builder-rust:${tag}"]
-}
-
-target "contracts-bedrock" {
-  dockerfile = "./ops/docker/Dockerfile.packages"
-  context = "."
-  target = "contracts-bedrock"
-  # See comment in Dockerfile.packages for why we only build for linux/amd64.
-  platforms = ["linux/amd64"]
-  tags = [for tag in split(",", IMAGE_TAGS) : "${REGISTRY}/${REPOSITORY}/contracts-bedrock:${tag}"]
 }
 
 target "op-deployer" {

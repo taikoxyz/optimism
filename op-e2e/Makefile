@@ -48,7 +48,7 @@ devnet-allocs: pre-test-cannon
 	make -C .. devnet-allocs
 .PHONY: devnet-allocs
 
-pre-test: pre-test-cannon pre-test-allocs
+pre-test: pre-test-cannon
 .PHONY: pre-test
 
 pre-test-cannon:
@@ -69,6 +69,8 @@ clean:
 .PHONY: clean
 
 fuzz:
-	go test -run NOTAREALTEST -tags cgo_test -v -fuzztime 10s -fuzz FuzzFjordCostFunction ./opgeth
-	go test -run NOTAREALTEST -tags cgo_test -v -fuzztime 10s -fuzz FuzzFastLzGethSolidity ./opgeth
-	go test -run NOTAREALTEST -tags cgo_test -v -fuzztime 10s -fuzz FuzzFastLzCgo ./opgeth
+	printf "%s\n" \
+		"go test -run NOTAREALTEST -tags cgo_test -v -fuzztime 10s -fuzz FuzzFjordCostFunction ./opgeth" \
+		"go test -run NOTAREALTEST -tags cgo_test -v -fuzztime 10s -fuzz FuzzFastLzGethSolidity ./opgeth" \
+		"go test -run NOTAREALTEST -tags cgo_test -v -fuzztime 10s -fuzz FuzzFastLzCgo ./opgeth" \
+	| parallel -j 8 {}

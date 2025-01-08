@@ -191,6 +191,9 @@ func (db *DB) OpenBlock(blockNum uint64) (ref eth.BlockRef, logCount uint32, exe
 			retErr = err
 			return
 		}
+		if seal.Number != 0 {
+			db.log.Warn("The first block is not block 0", "block", seal.Number)
+		}
 		ref = eth.BlockRef{
 			Hash:       seal.Hash,
 			Number:     seal.Number,
@@ -280,6 +283,11 @@ func (db *DB) Contains(blockNum uint64, logIdx uint32, logHash common.Hash) (typ
 	defer db.rwLock.RUnlock()
 	db.log.Trace("Checking for log", "blockNum", blockNum, "logIdx", logIdx, "hash", logHash)
 
+	// Hot-path: check if we have the block
+	if db.lastEntryContext.hasCompleteBlock() && db.lastEntryContext.blockNum < blockNum {
+		return types.BlockSeal{}, types.ErrFuture
+	}
+
 	evtHash, iter, err := db.findLogInfo(blockNum, logIdx)
 	if err != nil {
 		return types.BlockSeal{}, err // may be ErrConflict if the block does not have as many logs
@@ -287,7 +295,7 @@ func (db *DB) Contains(blockNum uint64, logIdx uint32, logHash common.Hash) (typ
 	db.log.Trace("Found initiatingEvent", "blockNum", blockNum, "logIdx", logIdx, "hash", evtHash)
 	// Found the requested block and log index, check if the hash matches
 	if evtHash != logHash {
-		return types.BlockSeal{}, fmt.Errorf("payload hash mismatch: expected %s, got %s", logHash, evtHash)
+		return types.BlockSeal{}, fmt.Errorf("payload hash mismatch: expected %s, got %s %w", logHash, evtHash, types.ErrConflict)
 	}
 	// Now find the block seal after the log, to identify where the log was included in.
 	err = iter.TraverseConditional(func(state IteratorState) error {
@@ -305,10 +313,6 @@ func (db *DB) Contains(blockNum uint64, logIdx uint32, logHash common.Hash) (typ
 	})
 	if err == nil {
 		panic("expected iterator to stop with error")
-	}
-	if errors.Is(err, types.ErrFuture) {
-		// Log is known, but as part of an unsealed block.
-		return types.BlockSeal{}, nil
 	}
 	if errors.Is(err, types.ErrStop) {
 		h, n, _ := iter.SealedBlock()

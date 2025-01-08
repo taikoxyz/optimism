@@ -1,9 +1,12 @@
 package state
 
 import (
-	"encoding/json"
 	"fmt"
 	"math/big"
+
+	op_service "github.com/ethereum-optimism/optimism/op-service"
+
+	"github.com/ethereum-optimism/optimism/op-service/jsonutil"
 
 	"github.com/ethereum/go-ethereum/rpc"
 
@@ -32,6 +35,9 @@ func CombineDeployConfig(intent *Intent, chainIntent *ChainIntent, state *State,
 			ProtocolVersionsProxy:       state.SuperchainDeployment.ProtocolVersionsProxyAddress,
 		},
 		L2InitializationConfig: genesis.L2InitializationConfig{
+			DevDeployConfig: genesis.DevDeployConfig{
+				FundDevAccounts: intent.FundDevAccounts,
+			},
 			L2GenesisBlockDeployConfig: genesis.L2GenesisBlockDeployConfig{
 				L2GenesisBlockGasLimit:      60_000_000,
 				L2GenesisBlockBaseFeePerGas: &l2GenesisBlockBaseFeePerGas,
@@ -48,7 +54,7 @@ func CombineDeployConfig(intent *Intent, chainIntent *ChainIntent, state *State,
 				SequencerFeeVaultRecipient:               chainIntent.SequencerFeeVaultRecipient,
 			},
 			GovernanceDeployConfig: genesis.GovernanceDeployConfig{
-				EnableGovernance:      true,
+				EnableGovernance:      false,
 				GovernanceTokenSymbol: "OP",
 				GovernanceTokenName:   "Optimism",
 				GovernanceTokenOwner:  common.HexToAddress("0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAdDEad"),
@@ -62,14 +68,19 @@ func CombineDeployConfig(intent *Intent, chainIntent *ChainIntent, state *State,
 				EIP1559DenominatorCanyon: 250,
 				EIP1559Elasticity:        chainIntent.Eip1559Elasticity,
 			},
+
+			// STOP! This struct sets the _default_ upgrade schedule for all chains.
+			// Any upgrades you enable here will be enabled for all new deployments.
+			// In-development hardforks should never be activated here. Instead, they
+			// should be specified as overrides.
 			UpgradeScheduleDeployConfig: genesis.UpgradeScheduleDeployConfig{
-				L2GenesisRegolithTimeOffset: u64UtilPtr(0),
-				L2GenesisCanyonTimeOffset:   u64UtilPtr(0),
-				L2GenesisDeltaTimeOffset:    u64UtilPtr(0),
-				L2GenesisEcotoneTimeOffset:  u64UtilPtr(0),
-				L2GenesisFjordTimeOffset:    u64UtilPtr(0),
-				L2GenesisGraniteTimeOffset:  u64UtilPtr(0),
-				UseInterop:                  false,
+				L2GenesisRegolithTimeOffset: op_service.U64UtilPtr(0),
+				L2GenesisCanyonTimeOffset:   op_service.U64UtilPtr(0),
+				L2GenesisDeltaTimeOffset:    op_service.U64UtilPtr(0),
+				L2GenesisEcotoneTimeOffset:  op_service.U64UtilPtr(0),
+				L2GenesisFjordTimeOffset:    op_service.U64UtilPtr(0),
+				L2GenesisGraniteTimeOffset:  op_service.U64UtilPtr(0),
+				UseInterop:                  intent.UseInterop,
 			},
 			L2CoreDeployConfig: genesis.L2CoreDeployConfig{
 				L1ChainID:                 intent.L1ChainID,
@@ -101,6 +112,10 @@ func CombineDeployConfig(intent *Intent, chainIntent *ChainIntent, state *State,
 		},
 	}
 
+	if intent.UseInterop {
+		cfg.L2InitializationConfig.UpgradeScheduleDeployConfig.L2GenesisInteropTimeOffset = op_service.U64UtilPtr(0)
+	}
+
 	if chainState.StartBlock == nil {
 		// These are dummy variables - see below for rationale.
 		num := rpc.LatestBlockNumber
@@ -112,6 +127,11 @@ func CombineDeployConfig(intent *Intent, chainIntent *ChainIntent, state *State,
 		cfg.L1StartingBlockTag = &genesis.MarshalableRPCBlockNumberOrHash{
 			BlockHash: &startHash,
 		}
+	}
+
+	if chainIntent.DangerousAltDAConfig.UseAltDA {
+		cfg.AltDADeployConfig = chainIntent.DangerousAltDAConfig
+		cfg.L1DependenciesConfig.DAChallengeProxy = chainState.DataAvailabilityChallengeProxyAddress
 	}
 
 	// The below dummy variables are set in order to allow the deploy
@@ -135,7 +155,7 @@ func CombineDeployConfig(intent *Intent, chainIntent *ChainIntent, state *State,
 	// Apply overrides after setting the main values.
 	var err error
 	if len(intent.GlobalDeployOverrides) > 0 {
-		cfg, err = mergeJSON(cfg, intent.GlobalDeployOverrides)
+		cfg, err = jsonutil.MergeJSON(cfg, intent.GlobalDeployOverrides)
 		if err != nil {
 			return genesis.DeployConfig{}, fmt.Errorf("error merging global L2 overrides: %w", err)
 
@@ -143,7 +163,7 @@ func CombineDeployConfig(intent *Intent, chainIntent *ChainIntent, state *State,
 	}
 
 	if len(chainIntent.DeployOverrides) > 0 {
-		cfg, err = mergeJSON(cfg, chainIntent.DeployOverrides)
+		cfg, err = jsonutil.MergeJSON(cfg, chainIntent.DeployOverrides)
 		if err != nil {
 			return genesis.DeployConfig{}, fmt.Errorf("error merging chain L2 overrides: %w", err)
 		}
@@ -156,49 +176,10 @@ func CombineDeployConfig(intent *Intent, chainIntent *ChainIntent, state *State,
 	return cfg, nil
 }
 
-// mergeJSON merges the provided overrides into the input struct. Fields
-// must be JSON-serializable for this to work. Overrides are applied in
-// order of precedence - i.e., the last overrides will override keys from
-// all preceding overrides.
-func mergeJSON[T any](in T, overrides ...map[string]any) (T, error) {
-	var out T
-	inJSON, err := json.Marshal(in)
-	if err != nil {
-		return out, err
-	}
-
-	var tmpMap map[string]interface{}
-	if err := json.Unmarshal(inJSON, &tmpMap); err != nil {
-		return out, err
-	}
-
-	for _, override := range overrides {
-		for k, v := range override {
-			tmpMap[k] = v
-		}
-	}
-
-	inJSON, err = json.Marshal(tmpMap)
-	if err != nil {
-		return out, err
-	}
-
-	if err := json.Unmarshal(inJSON, &out); err != nil {
-		return out, err
-	}
-
-	return out, nil
-}
-
 func mustHexBigFromHex(hex string) *hexutil.Big {
 	num := hexutil.MustDecodeBig(hex)
 	hexBig := hexutil.Big(*num)
 	return &hexBig
-}
-
-func u64UtilPtr(in uint64) *hexutil.Uint64 {
-	util := hexutil.Uint64(in)
-	return &util
 }
 
 func calculateBatchInboxAddr(chainID common.Hash) common.Address {

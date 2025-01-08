@@ -90,9 +90,9 @@ func TestL1Beacon(t *testing.T) {
 
 func TestTraceType(t *testing.T) {
 	t.Run("Default", func(t *testing.T) {
-		expectedDefault := types.TraceTypeCannon
-		cfg := configForArgs(t, addRequiredArgsExcept(expectedDefault, "--trace-type"))
-		require.Equal(t, []types.TraceType{expectedDefault}, cfg.TraceTypes)
+		expectedDefault := []types.TraceType{types.TraceTypeCannon, types.TraceTypeAsteriscKona}
+		cfg := configForArgs(t, addRequiredArgsForMultipleTracesExcept(expectedDefault, "--trace-type"))
+		require.Equal(t, expectedDefault, cfg.TraceTypes)
 	})
 
 	for _, traceType := range types.TraceTypes {
@@ -176,6 +176,13 @@ func TestNetwork(t *testing.T) {
 
 	t.Run("UnknownNetwork", func(t *testing.T) {
 		verifyArgsInvalid(t, "unknown chain: not-a-network", addRequiredArgsExcept(types.TraceTypeAlphabet, "--game-factory-address", "--network=not-a-network"))
+	})
+
+	t.Run("ChainIDAllowedWhenGameFactoryAddressSupplied", func(t *testing.T) {
+		addr := common.Address{0xbb, 0xcc, 0xdd}
+		cfg := configForArgs(t, addRequiredArgsExcept(types.TraceTypeAlphabet, "--game-factory-address", "--network=1234", "--game-factory-address="+addr.Hex()))
+		require.Equal(t, addr, cfg.GameFactoryAddress)
+		require.Equal(t, "1234", cfg.Cannon.Network)
 	})
 }
 
@@ -758,7 +765,7 @@ func TestCannonRequiredArgs(t *testing.T) {
 		t.Run(fmt.Sprintf("TestMustNotSpecifyCannonNetworkAndRollup-%v", traceType), func(t *testing.T) {
 			verifyArgsInvalid(
 				t,
-				"flag cannon-network can not be used with cannon-rollup-config and cannon-l2-genesis",
+				"flag cannon-network can not be used with cannon-rollup-config, cannon-l2-genesis or cannon-l2-custom",
 				addRequiredArgsExcept(traceType, "--cannon-network",
 					"--cannon-network", cannonNetwork, "--cannon-rollup-config=rollup.json"))
 		})
@@ -770,9 +777,10 @@ func TestCannonRequiredArgs(t *testing.T) {
 			args["--network"] = cannonNetwork
 			args["--cannon-rollup-config"] = "rollup.json"
 			args["--cannon-l2-genesis"] = "gensis.json"
+			args["--cannon-l2-custom"] = "true"
 			verifyArgsInvalid(
 				t,
-				"flag network can not be used with cannon-rollup-config and cannon-l2-genesis",
+				"flag network can not be used with cannon-rollup-config, cannon-l2-genesis or cannon-l2-custom",
 				toArgList(args))
 		})
 
@@ -804,6 +812,14 @@ func TestCannonRequiredArgs(t *testing.T) {
 				cfg := configForArgs(t, addRequiredArgsExcept(traceType, "--cannon-network", "--cannon-network", testNetwork))
 				require.Equal(t, testNetwork, cfg.Cannon.Network)
 			})
+		})
+
+		t.Run(fmt.Sprintf("TestSetCannonL2ChainId-%v", traceType), func(t *testing.T) {
+			cfg := configForArgs(t, addRequiredArgsExcept(traceType, "--cannon-network",
+				"--cannon-rollup-config=rollup.json",
+				"--cannon-l2-genesis=genesis.json",
+				"--cannon-l2-custom"))
+			require.True(t, cfg.Cannon.L2Custom)
 		})
 
 		t.Run(fmt.Sprintf("TestCannonRollupConfig-%v", traceType), func(t *testing.T) {
@@ -937,6 +953,18 @@ func TestAdditionalBondClaimants(t *testing.T) {
 	})
 }
 
+func TestSignerTLS(t *testing.T) {
+	t.Run("EnabledByDefault", func(t *testing.T) {
+		cfg := configForArgs(t, addRequiredArgs(types.TraceTypeAlphabet))
+		require.True(t, cfg.TxMgrConfig.SignerCLIConfig.TLSConfig.Enabled)
+	})
+
+	t.Run("Disabled", func(t *testing.T) {
+		cfg := configForArgs(t, addRequiredArgs(types.TraceTypeAlphabet, "--signer.tls.enabled=false"))
+		require.False(t, cfg.TxMgrConfig.SignerCLIConfig.TLSConfig.Enabled)
+	})
+}
+
 func verifyArgsInvalid(t *testing.T, messageContains string, cliArgs []string) {
 	_, _, err := dryRunWithArgs(cliArgs)
 	require.ErrorContains(t, err, messageContains)
@@ -976,12 +1004,28 @@ func addRequiredArgsExcept(traceType types.TraceType, name string, optionalArgs 
 	return append(toArgList(req), optionalArgs...)
 }
 
+func addRequiredArgsForMultipleTracesExcept(traceType []types.TraceType, name string, optionalArgs ...string) []string {
+	req := requiredArgsMultiple(traceType)
+	delete(req, name)
+	return append(toArgList(req), optionalArgs...)
+}
+
 func addRequiredArgsExceptArr(traceType types.TraceType, names []string, optionalArgs ...string) []string {
 	req := requiredArgs(traceType)
 	for _, name := range names {
 		delete(req, name)
 	}
 	return append(toArgList(req), optionalArgs...)
+}
+
+func requiredArgsMultiple(traceType []types.TraceType) map[string]string {
+	args := make(map[string]string)
+	for _, t := range traceType {
+		for name, value := range requiredArgs(t) {
+			args[name] = value
+		}
+	}
+	return args
 }
 
 func requiredArgs(traceType types.TraceType) map[string]string {
@@ -1010,7 +1054,6 @@ func addRequiredCannonArgs(args map[string]string) {
 	args["--cannon-bin"] = cannonBin
 	args["--cannon-server"] = cannonServer
 	args["--cannon-prestate"] = cannonPreState
-	args["--l2-eth-rpc"] = l2EthRpc
 }
 
 func addRequiredAsteriscArgs(args map[string]string) {
@@ -1018,7 +1061,6 @@ func addRequiredAsteriscArgs(args map[string]string) {
 	args["--asterisc-bin"] = asteriscBin
 	args["--asterisc-server"] = asteriscServer
 	args["--asterisc-prestate"] = asteriscPreState
-	args["--l2-eth-rpc"] = l2EthRpc
 }
 
 func addRequiredAsteriscKonaArgs(args map[string]string) {
@@ -1026,7 +1068,6 @@ func addRequiredAsteriscKonaArgs(args map[string]string) {
 	args["--asterisc-bin"] = asteriscBin
 	args["--asterisc-kona-server"] = asteriscServer
 	args["--asterisc-kona-prestate"] = asteriscPreState
-	args["--l2-eth-rpc"] = l2EthRpc
 }
 
 func toArgList(req map[string]string) []string {

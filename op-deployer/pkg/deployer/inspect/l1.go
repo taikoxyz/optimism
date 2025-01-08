@@ -3,7 +3,10 @@ package inspect
 import (
 	"fmt"
 
+	"github.com/ethereum-optimism/optimism/op-chain-ops/genesis"
+
 	"github.com/ethereum-optimism/optimism/op-deployer/pkg/deployer/pipeline"
+	"github.com/ethereum-optimism/optimism/op-deployer/pkg/deployer/state"
 
 	"github.com/ethereum-optimism/optimism/op-service/ioutil"
 	"github.com/ethereum-optimism/optimism/op-service/jsonutil"
@@ -15,6 +18,33 @@ type L1Contracts struct {
 	SuperchainDeployment      SuperchainDeployment      `json:"superchainDeployment"`
 	OpChainDeployment         OpChainDeployment         `json:"opChainDeployment"`
 	ImplementationsDeployment ImplementationsDeployment `json:"implementationsDeployment"`
+}
+
+func (l L1Contracts) AsL1Deployments() *genesis.L1Deployments {
+	return &genesis.L1Deployments{
+		AddressManager:                    l.OpChainDeployment.AddressManagerAddress,
+		DisputeGameFactory:                l.ImplementationsDeployment.DisputeGameFactoryImplAddress,
+		DisputeGameFactoryProxy:           l.OpChainDeployment.DisputeGameFactoryProxyAddress,
+		L1CrossDomainMessenger:            l.ImplementationsDeployment.L1CrossDomainMessengerImplAddress,
+		L1CrossDomainMessengerProxy:       l.OpChainDeployment.L1CrossDomainMessengerProxyAddress,
+		L1ERC721Bridge:                    l.ImplementationsDeployment.L1ERC721BridgeImplAddress,
+		L1ERC721BridgeProxy:               l.OpChainDeployment.L1ERC721BridgeProxyAddress,
+		L1StandardBridge:                  l.ImplementationsDeployment.L1StandardBridgeImplAddress,
+		L1StandardBridgeProxy:             l.OpChainDeployment.L1StandardBridgeProxyAddress,
+		L2OutputOracle:                    common.Address{},
+		L2OutputOracleProxy:               common.Address{},
+		OptimismMintableERC20Factory:      l.ImplementationsDeployment.OptimismMintableERC20FactoryImplAddress,
+		OptimismMintableERC20FactoryProxy: l.OpChainDeployment.OptimismMintableERC20FactoryProxyAddress,
+		OptimismPortal:                    l.ImplementationsDeployment.OptimismPortalImplAddress,
+		OptimismPortalProxy:               l.OpChainDeployment.OptimismPortalProxyAddress,
+		ProxyAdmin:                        l.OpChainDeployment.ProxyAdminAddress,
+		SystemConfig:                      l.ImplementationsDeployment.SystemConfigImplAddress,
+		SystemConfigProxy:                 l.OpChainDeployment.SystemConfigProxyAddress,
+		ProtocolVersions:                  l.SuperchainDeployment.ProtocolVersionsImplAddress,
+		ProtocolVersionsProxy:             l.SuperchainDeployment.ProtocolVersionsProxyAddress,
+		DataAvailabilityChallenge:         l.OpChainDeployment.DataAvailabilityChallengeImplAddress,
+		DataAvailabilityChallengeProxy:    l.OpChainDeployment.DataAvailabilityChallengeProxyAddress,
+	}
 }
 
 type SuperchainDeployment struct {
@@ -37,14 +67,16 @@ type OpChainDeployment struct {
 	DisputeGameFactoryProxyAddress           common.Address `json:"disputeGameFactoryProxyAddress"`
 	AnchorStateRegistryProxyAddress          common.Address `json:"anchorStateRegistryProxyAddress"`
 	AnchorStateRegistryImplAddress           common.Address `json:"anchorStateRegistryImplAddress"`
-	// FaultDisputeGameAddress                  common.Address `json:"faultDisputeGameAddress"`
-	PermissionedDisputeGameAddress          common.Address `json:"permissionedDisputeGameAddress"`
-	DelayedWETHPermissionedGameProxyAddress common.Address `json:"delayedWETHPermissionedGameProxyAddress"`
+	FaultDisputeGameAddress                  common.Address `json:"faultDisputeGameAddress"`
+	PermissionedDisputeGameAddress           common.Address `json:"permissionedDisputeGameAddress"`
+	DelayedWETHPermissionedGameProxyAddress  common.Address `json:"delayedWETHPermissionedGameProxyAddress"`
 	// DelayedWETHPermissionlessGameProxyAddress common.Address `json:"delayedWETHPermissionlessGameProxyAddress"`
+	DataAvailabilityChallengeProxyAddress common.Address `json:"dataAvailabilityChallengeProxyAddress"`
+	DataAvailabilityChallengeImplAddress  common.Address `json:"dataAvailabilityChallengeImplAddress"`
 }
 
 type ImplementationsDeployment struct {
-	OpcmProxyAddress                        common.Address `json:"opcmProxyAddress"`
+	OpcmAddress                             common.Address `json:"opcmAddress"`
 	DelayedWETHImplAddress                  common.Address `json:"delayedWETHImplAddress"`
 	OptimismPortalImplAddress               common.Address `json:"optimismPortalImplAddress"`
 	PreimageOracleSingletonAddress          common.Address `json:"preimageOracleSingletonAddress"`
@@ -68,9 +100,22 @@ func L1CLI(cliCtx *cli.Context) error {
 		return fmt.Errorf("failed to read intent: %w", err)
 	}
 
-	chainState, err := globalState.Chain(cfg.ChainID)
+	l1Contracts, err := L1(globalState, cfg.ChainID)
 	if err != nil {
-		return fmt.Errorf("failed to get chain state for ID %s: %w", cfg.ChainID.String(), err)
+		return fmt.Errorf("failed to generate l1Contracts: %w", err)
+	}
+
+	if err := jsonutil.WriteJSON(l1Contracts, ioutil.ToStdOutOrFileOrNoop(cfg.Outfile, 0o666)); err != nil {
+		return fmt.Errorf("failed to write L1 contract addresses: %w", err)
+	}
+
+	return nil
+}
+
+func L1(globalState *state.State, chainID common.Hash) (*L1Contracts, error) {
+	chainState, err := globalState.Chain(chainID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get chain state for ID %s: %w", chainID.String(), err)
 	}
 
 	l1Contracts := L1Contracts{
@@ -93,13 +138,15 @@ func L1CLI(cliCtx *cli.Context) error {
 			DisputeGameFactoryProxyAddress:           chainState.DisputeGameFactoryProxyAddress,
 			AnchorStateRegistryProxyAddress:          chainState.AnchorStateRegistryProxyAddress,
 			AnchorStateRegistryImplAddress:           chainState.AnchorStateRegistryImplAddress,
-			// FaultDisputeGameAddress:                  chainState.FaultDisputeGameAddress,
-			PermissionedDisputeGameAddress:          chainState.PermissionedDisputeGameAddress,
-			DelayedWETHPermissionedGameProxyAddress: chainState.DelayedWETHPermissionedGameProxyAddress,
+			FaultDisputeGameAddress:                  chainState.FaultDisputeGameAddress,
+			PermissionedDisputeGameAddress:           chainState.PermissionedDisputeGameAddress,
+			DelayedWETHPermissionedGameProxyAddress:  chainState.DelayedWETHPermissionedGameProxyAddress,
+			DataAvailabilityChallengeProxyAddress:    chainState.DataAvailabilityChallengeProxyAddress,
+			DataAvailabilityChallengeImplAddress:     chainState.DataAvailabilityChallengeImplAddress,
 			// DelayedWETHPermissionlessGameProxyAddress: chainState.DelayedWETHPermissionlessGameProxyAddress,
 		},
 		ImplementationsDeployment: ImplementationsDeployment{
-			OpcmProxyAddress:                        globalState.ImplementationsDeployment.OpcmProxyAddress,
+			OpcmAddress:                             globalState.ImplementationsDeployment.OpcmAddress,
 			DelayedWETHImplAddress:                  globalState.ImplementationsDeployment.DelayedWETHImplAddress,
 			OptimismPortalImplAddress:               globalState.ImplementationsDeployment.OptimismPortalImplAddress,
 			PreimageOracleSingletonAddress:          globalState.ImplementationsDeployment.PreimageOracleSingletonAddress,
@@ -113,9 +160,5 @@ func L1CLI(cliCtx *cli.Context) error {
 		},
 	}
 
-	if err := jsonutil.WriteJSON(l1Contracts, ioutil.ToStdOutOrFileOrNoop(cfg.Outfile, 0o666)); err != nil {
-		return fmt.Errorf("failed to write L1 contract addresses: %w", err)
-	}
-
-	return nil
+	return &l1Contracts, nil
 }

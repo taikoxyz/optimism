@@ -7,7 +7,6 @@ import { Vm } from "forge-std/Vm.sol";
 import { Predeploys } from "src/libraries/Predeploys.sol";
 import { Config } from "scripts/libraries/Config.sol";
 import { StorageSlot } from "scripts/libraries/ForgeArtifacts.sol";
-import { LibString } from "@solady/utils/LibString.sol";
 import { ForgeArtifacts } from "scripts/libraries/ForgeArtifacts.sol";
 import { Process } from "scripts/libraries/Process.sol";
 
@@ -67,11 +66,7 @@ abstract contract Artifacts {
     ///         as well as the JSON files that contain addresses in the `superchain-registry`
     ///         repo. The JSON key is the name of the contract and the value is an address.
     function _loadAddresses(string memory _path) internal {
-        string[] memory commands = new string[](3);
-        commands[0] = "bash";
-        commands[1] = "-c";
-        commands[2] = string.concat("jq -cr < ", _path);
-        string memory json = string(Process.run(commands));
+        string memory json = Process.bash(string.concat("jq -cr < ", _path));
         string[] memory keys = vm.parseJsonKeys(json, "");
         for (uint256 i; i < keys.length; i++) {
             string memory key = keys[i];
@@ -195,6 +190,8 @@ abstract contract Artifacts {
         _namedDeployments[_name] = deployment;
         _newDeployments.push(deployment);
         _appendDeployment(_name, _deployed);
+
+        vm.label(_deployed, _name);
     }
 
     /// @notice Adds a deployment to the temp deployments file
@@ -215,17 +212,19 @@ abstract contract Artifacts {
     }
 
     /// @notice Returns the value of the internal `_initialized` storage slot for a given contract.
-    function loadInitializedSlot(string memory _contractName) public returns (uint8 initialized_) {
-        address contractAddress = mustGetAddress(_contractName);
+    /// @param _sourceName The name of the contract in the source code
+    /// @param _deploymentName The name used to save() the deployed contract
+    function loadInitializedSlot(
+        string memory _sourceName,
+        string memory _deploymentName
+    )
+        public
+        returns (uint8 initialized_)
+    {
+        address contractAddress = mustGetAddress(_deploymentName);
 
-        // Check if the contract name ends with `Proxy` and, if so override the contract name which is used to
-        // retrieve the storage layout.
-        if (LibString.endsWith(_contractName, "Proxy")) {
-            _contractName = LibString.slice(_contractName, 0, bytes(_contractName).length - 5);
-        }
-
-        StorageSlot memory slot = ForgeArtifacts.getInitializedSlot(_contractName);
-        bytes32 slotVal = vm.load(contractAddress, bytes32(vm.parseUint(slot.slot)));
+        StorageSlot memory slot = ForgeArtifacts.getInitializedSlot(_sourceName);
+        bytes32 slotVal = vm.load(contractAddress, bytes32(slot.slot));
         initialized_ = uint8((uint256(slotVal) >> (slot.offset * 8)) & 0xFF);
     }
 }

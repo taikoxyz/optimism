@@ -1,3 +1,4 @@
+
 # op-conductor
 
 op-conductor is an auxiliary service designed to enhance the reliability and availability of a sequencer in
@@ -13,12 +14,14 @@ The design will provide below guarantees:
 2. No unsafe head stall during network partition
 3. 100% uptime with no more than 1 node failure (for a standard 3 node setup)
 
+For configuration and runbook, please refer to [RUNBOOK.md](./RUNBOOK.md)
+
 ## Design
 
 ### Architecture
 
 Typically you can setup a 3 nodes sequencer cluster, each one with op-conductor running alongside the sequencer in different regions / AZs.
-Below diagram showcaes how conductor interacts with relevant op-stack components.
+Below diagram showcases how conductor interacts with relevant op-stack components.
 
 ![op-conductor setup](./assets/setup.svg)
 
@@ -45,7 +48,7 @@ This way you could understand how we handle the state transitions.
 
 ### RPC design
 
-conductor provides rpc APIs for ease of cluster management, see [api](./op-conductor/rpc/api.go) for rpc definitions and how they can be used.
+conductor provides rpc APIs for ease of cluster management, see [api](./rpc/api.go) for rpc definitions and how they can be used.
 
 ### Failure Scenario walkthrough
 
@@ -91,6 +94,6 @@ There are 2 situations we need to consider.
 
 1. Leadership transfer triggered by raft consensus protocol (network partition, etc)
    1. In this case, a new leader will be elected regardless of its sync status, it could be behind for a few blocks
-   2. The solution is to simple, wait until the elected leader catch up to tip (same as the FSM tip)
+   2. The solution is to simply wait until the elected leader catches up to tip (same as the FSM tip)
 2. Leadership transfer triggered by us (Conductor detected unhealthy sequencer)
    1. In this case, we have the choice to determine which node to transfer leadership to, we can simply query the latest block from candidates within the network and transfer directly to the one with the most up to date blocks.

@@ -130,9 +130,9 @@ func (ea *L2EngineAPI) IncludeTx(tx *types.Transaction, from common.Address) err
 	if ea.blockProcessor == nil {
 		return ErrNotBuildingBlock
 	}
+
 	if ea.l2ForceEmpty {
 		ea.log.Info("Skipping including a transaction because e.L2ForceEmpty is true")
-		// t.InvalidAction("cannot include any sequencer txs")
 		return nil
 	}
 
@@ -503,7 +503,7 @@ func (ea *L2EngineAPI) newPayload(_ context.Context, payload *eth.ExecutionPaylo
 		Withdrawals:   toGethWithdrawals(payload),
 		ExcessBlobGas: (*uint64)(payload.ExcessBlobGas),
 		BlobGasUsed:   (*uint64)(payload.BlobGasUsed),
-	}, hashes, root)
+	}, hashes, root, ea.backend.Config())
 	if err != nil {
 		log.Debug("Invalid NewPayload params", "params", payload, "error", err)
 		return &eth.PayloadStatusV1{Status: eth.ExecutionInvalidBlockHash}, nil

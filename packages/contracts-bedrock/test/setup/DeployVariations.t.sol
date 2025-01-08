@@ -22,17 +22,15 @@ contract DeployVariations_Test is CommonTest {
         }
     }
 
-    /// forge-config: ciheavy.fuzz.runs = 512
     /// @dev It should be possible to enable Fault Proofs with any mix of CGT and Alt-DA.
-    function testFuzz_enableFaultProofs(bool _enableCGT, bool _enableAltDa) public virtual {
+    function testFuzz_enableFaultProofs_succeeds(bool _enableCGT, bool _enableAltDa) public virtual {
         enableAddOns(_enableCGT, _enableAltDa);
 
         super.setUp();
     }
 
-    /// forge-config: ciheavy.fuzz.runs = 512
     /// @dev It should be possible to enable Fault Proofs and Interop with any mix of CGT and Alt-DA.
-    function test_enableInteropAndFaultProofs(bool _enableCGT, bool _enableAltDa) public virtual {
+    function test_enableInteropAndFaultProofs_succeeds(bool _enableCGT, bool _enableAltDa) public virtual {
         enableAddOns(_enableCGT, _enableAltDa);
         super.enableInterop();
 

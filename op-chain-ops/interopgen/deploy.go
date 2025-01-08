@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/ethereum-optimism/optimism/op-deployer/pkg/deployer/standard"
+
 	"github.com/ethereum-optimism/optimism/op-deployer/pkg/deployer/opcm"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -168,12 +170,11 @@ func DeploySuperchainToL1(l1Host *script.Host, superCfg *SuperchainConfig) (*Sup
 		ProofMaturityDelaySeconds:       superCfg.Implementations.FaultProof.ProofMaturityDelaySeconds,
 		DisputeGameFinalityDelaySeconds: superCfg.Implementations.FaultProof.DisputeGameFinalityDelaySeconds,
 		MipsVersion:                     superCfg.Implementations.FaultProof.MipsVersion,
-		Release:                         superCfg.Implementations.Release,
+		L1ContractsRelease:              superCfg.Implementations.L1ContractsRelease,
 		SuperchainConfigProxy:           superDeployment.SuperchainConfigProxy,
 		ProtocolVersionsProxy:           superDeployment.ProtocolVersionsProxy,
-		OpcmProxyOwner:                  superDeployment.SuperchainProxyAdmin,
 		UseInterop:                      superCfg.Implementations.UseInterop,
-		StandardVersionsToml:            opcm.StandardVersionsMainnetData,
+		StandardVersionsToml:            standard.VersionsMainnetData,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to deploy Implementations contracts: %w", err)
@@ -198,7 +199,7 @@ func DeployL2ToL1(l1Host *script.Host, superCfg *SuperchainConfig, superDeployme
 
 	l1Host.SetTxOrigin(cfg.Deployer)
 
-	output, err := opcm.DeployOPChain(l1Host, opcm.DeployOPChainInput{
+	output, err := opcm.DeployOPChainV160(l1Host, opcm.DeployOPChainInputV160{
 		OpChainProxyAdminOwner:  cfg.ProxyAdminOwner,
 		SystemConfigOwner:       cfg.SystemConfigOwner,
 		Batcher:                 cfg.BatchSenderAddress,
@@ -208,7 +209,7 @@ func DeployL2ToL1(l1Host *script.Host, superCfg *SuperchainConfig, superDeployme
 		BasefeeScalar:           cfg.GasPriceOracleBaseFeeScalar,
 		BlobBaseFeeScalar:       cfg.GasPriceOracleBlobBaseFeeScalar,
 		L2ChainId:               new(big.Int).SetUint64(cfg.L2ChainID),
-		OpcmProxy:               superDeployment.OpcmProxy,
+		Opcm:                    superDeployment.Opcm,
 		SaltMixer:               cfg.SaltMixer,
 		GasLimit:                cfg.GasLimit,
 		DisputeGameType:         cfg.DisputeGameType,
@@ -217,6 +218,7 @@ func DeployL2ToL1(l1Host *script.Host, superCfg *SuperchainConfig, superDeployme
 		DisputeSplitDepth:       cfg.DisputeSplitDepth,
 		DisputeClockExtension:   cfg.DisputeClockExtension,
 		DisputeMaxClockDuration: cfg.DisputeMaxClockDuration,
+		StartingAnchorRoots:     opcm.PermissionedGameStartingAnchorRoots,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to deploy L2 OP chain: %w", err)

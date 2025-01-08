@@ -34,7 +34,7 @@ contract PredeploysBaseTest is CommonTest {
             || _addr == Predeploys.GOVERNANCE_TOKEN;
     }
 
-    function test_predeployToCodeNamespace() external pure {
+    function test_predeployToCodeNamespace_works() external pure {
         assertEq(
             address(0xc0D3C0d3C0d3C0D3c0d3C0d3c0D3C0d3c0d30000),
             Predeploys.predeployToCodeNamespace(Predeploys.LEGACY_MESSAGE_PASSER)
@@ -106,7 +106,7 @@ contract PredeploysBaseTest is CommonTest {
             }
 
             if (_isInitializable(addr)) {
-                assertEq(l2Genesis.loadInitializedSlot(cname), uint8(1));
+                assertEq(l2Genesis.loadInitializedSlot({ _sourceName: cname, _deploymentName: cname }), uint8(1));
             }
         }
     }

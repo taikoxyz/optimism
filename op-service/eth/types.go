@@ -25,9 +25,14 @@ func (c ErrorCode) IsEngineError() bool {
 	return -38100 < c && c <= -38000
 }
 
+func (c ErrorCode) IsGenericRPCError() bool {
+	return -32700 < c && c <= -32600
+}
+
 // Engine error codes used to be -3200x, but were rebased to -3800x:
 // https://github.com/ethereum/execution-apis/pull/214
 const (
+	MethodNotFound           ErrorCode = -32601 // RPC method not found or not available.
 	InvalidParams            ErrorCode = -32602
 	UnknownPayload           ErrorCode = -38001 // Payload does not exist / is not available.
 	InvalidForkchoiceState   ErrorCode = -38002 // Forkchoice state is invalid / inconsistent.
@@ -38,8 +43,7 @@ const (
 
 var ErrBedrockScalarPaddingNotEmpty = errors.New("version 0 scalar value has non-empty padding")
 
-// InputError distinguishes an user-input error from regular rpc errors,
-// to help the (Engine) API user divert from accidental input mistakes.
+// InputError can be used to create rpc.Error instances with a specific error code.
 type InputError struct {
 	Inner error
 	Code  ErrorCode
@@ -47,6 +51,11 @@ type InputError struct {
 
 func (ie InputError) Error() string {
 	return fmt.Sprintf("input error %d: %s", ie.Code, ie.Inner.Error())
+}
+
+// Makes InputError implement the rpc.Error interface
+func (ie InputError) ErrorCode() int {
+	return int(ie.Code)
 }
 
 func (ie InputError) Unwrap() error {
@@ -356,6 +365,31 @@ type PayloadAttributes struct {
 	GasLimit *Uint64Quantity `json:"gasLimit,omitempty"`
 	// EIP-1559 parameters, to be specified only post-Holocene
 	EIP1559Params *Bytes8 `json:"eip1559Params,omitempty"`
+}
+
+// IsDepositsOnly returns whether all transactions of the PayloadAttributes are of Deposit
+// type. Empty transactions are also considered non-Deposit transactions.
+func (a *PayloadAttributes) IsDepositsOnly() bool {
+	for _, tx := range a.Transactions {
+		if len(tx) == 0 || tx[0] != types.DepositTxType {
+			return false
+		}
+	}
+	return true
+}
+
+// WithDepositsOnly return a shallow clone with all non-Deposit transactions stripped from its
+// transactions. The order is preserved.
+func (a *PayloadAttributes) WithDepositsOnly() *PayloadAttributes {
+	clone := *a
+	depositTxs := make([]Data, 0, len(a.Transactions))
+	for _, tx := range a.Transactions {
+		if len(tx) > 0 && tx[0] == types.DepositTxType {
+			depositTxs = append(depositTxs, tx)
+		}
+	}
+	clone.Transactions = depositTxs
+	return &clone
 }
 
 type ExecutePayloadStatus string

@@ -15,6 +15,12 @@ endif
 
 .DEFAULT_GOAL := cannon
 
+# The MIPS64 r1 opcodes not supported by cannon. This list does not include coprocess-specific opcodes.
+UNSUPPORTED_OPCODES := (dclo|dclz)
+
+CANNON32_FUZZTIME := 10s
+CANNON64_FUZZTIME := 20s
+
 cannon32-impl:
 	env GO111MODULE=on GOOS=$(TARGETOS) GOARCH=$(TARGETARCH) go build --tags=cannon32 -v $(LDFLAGS) -o ./bin/cannon32-impl .
 
@@ -30,8 +36,8 @@ cannon-embeds: cannon32-impl cannon64-impl
 	@cp bin/cannon32-impl ./multicannon/embeds/cannon-2
 	# multithreaded
 	@cp bin/cannon32-impl ./multicannon/embeds/cannon-1
-	# 64-bit multithreaded
-	@cp bin/cannon64-impl ./multicannon/embeds/cannon-3
+	# 64-bit multithreaded v2
+	@cp bin/cannon64-impl ./multicannon/embeds/cannon-4
 
 cannon: cannon-embeds
 	env GO111MODULE=on GOOS=$(TARGETOS) GOARCH=$(TARGETARCH) go build -v $(LDFLAGS) -o ./bin/cannon ./multicannon/
@@ -43,7 +49,7 @@ elf:
 	make -C ./testdata/example elf
 
 sanitize-program:
-	@if ! { mips-linux-gnu-objdump -d -j .text $$GUEST_PROGRAM | awk '{print $3}' | grep -Ew -m1 '(bltzal)'; }; then \
+	@if ! { mips-linux-gnu-objdump -d -j .text $$GUEST_PROGRAM | awk '{print $3}' | grep -Ew -m1 "$(UNSUPPORTED_OPCODES)"; }; then \
 		echo "guest program is sanitized for unsupported instructions"; \
 	else \
 		echo "found unsupported instructions in the guest program"; \
@@ -53,8 +59,11 @@ sanitize-program:
 contract:
 	cd ../packages/contracts-bedrock && forge build
 
-test: elf contract
+test: elf contract test64
 	go test -v ./...
+
+test64: elf contract
+	go test -tags=cannon64 -run '(TestEVM.*64|TestHelloEVM|TestClaimEVM)' ./mipsevm/tests
 
 diff-%-cannon: cannon elf
 	$$OTHER_CANNON load-elf --type $* --path ./testdata/example/bin/hello.elf --out ./bin/prestate-other.bin.gz --meta ""
@@ -80,19 +89,30 @@ cannon-stf-verify:
 	@docker build --progress plain -f Dockerfile.diff ../
 
 fuzz:
-  # Common vm tests
-	go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime 10s -fuzz=FuzzStateSyscallBrk ./mipsevm/tests
-	go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime 10s -fuzz=FuzzStateSyscallMmap ./mipsevm/tests
-	go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime 10s -fuzz=FuzzStateSyscallExitGroup ./mipsevm/tests
-	go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime 10s -fuzz=FuzzStateSyscallFcntl ./mipsevm/tests
-	go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime 10s -fuzz=FuzzStateHintRead ./mipsevm/tests
-	go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime 20s -fuzz=FuzzStatePreimageRead ./mipsevm/tests
-	go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime 10s -fuzz=FuzzStateHintWrite ./mipsevm/tests
-	go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime 20s -fuzz=FuzzStatePreimageWrite ./mipsevm/tests
-	# Single-threaded tests
-	go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime 10s -fuzz=FuzzStateSyscallCloneST ./mipsevm/tests
-	# Multi-threaded tests
-	go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime 10s -fuzz=FuzzStateSyscallCloneMT ./mipsevm/tests
+	printf "%s\n" \
+		"go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime $(CANNON32_FUZZTIME) -fuzz=FuzzStateSyscallBrk ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime $(CANNON32_FUZZTIME) -fuzz=FuzzStateSyscallMmap ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime $(CANNON32_FUZZTIME) -fuzz=FuzzStateSyscallExitGroup ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime $(CANNON32_FUZZTIME) -fuzz=FuzzStateSyscallFcntl ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime $(CANNON32_FUZZTIME) -fuzz=FuzzStateHintRead ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime 20s -fuzz=FuzzStatePreimageRead ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime $(CANNON32_FUZZTIME) -fuzz=FuzzStateHintWrite ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime 20s -fuzz=FuzzStatePreimageWrite ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime $(CANNON32_FUZZTIME) -fuzz=FuzzStateSyscallCloneST ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime $(CANNON32_FUZZTIME) -fuzz=FuzzStateSyscallCloneMT ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) -tags=cannon64 -run NOTAREALTEST -v -fuzztime $(CANNON64_FUZZTIME) -fuzz=FuzzStateConsistencyMulOp ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) -tags=cannon64 -run NOTAREALTEST -v -fuzztime $(CANNON64_FUZZTIME) -fuzz=FuzzStateConsistencyMultOp ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) -tags=cannon64 -run NOTAREALTEST -v -fuzztime $(CANNON64_FUZZTIME) -fuzz=FuzzStateConsistencyMultuOp ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) --tags=cannon64 -run NOTAREALTEST -v -fuzztime $(CANNON64_FUZZTIME) -fuzz=FuzzStateSyscallBrk ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) --tags=cannon64 -run NOTAREALTEST -v -fuzztime $(CANNON64_FUZZTIME) -fuzz=FuzzStateSyscallMmap ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) --tags=cannon64 -run NOTAREALTEST -v -fuzztime $(CANNON64_FUZZTIME) -fuzz=FuzzStateSyscallExitGroup ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) --tags=cannon64 -run NOTAREALTEST -v -fuzztime $(CANNON64_FUZZTIME) -fuzz=FuzzStateSyscallFcntl ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) --tags=cannon64 -run NOTAREALTEST -v -fuzztime $(CANNON64_FUZZTIME) -fuzz=FuzzStateHintRead ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) --tags=cannon64 -run NOTAREALTEST -v -fuzztime $(CANNON64_FUZZTIME) -fuzz=FuzzStatePreimageRead ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) --tags=cannon64 -run NOTAREALTEST -v -fuzztime $(CANNON64_FUZZTIME) -fuzz=FuzzStateHintWrite ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) --tags=cannon64 -run NOTAREALTEST -v -fuzztime $(CANNON64_FUZZTIME) -fuzz=FuzzStatePreimageWrite ./mipsevm/tests" \
+		"go test $(FUZZLDFLAGS) --tags=cannon64 -run NOTAREALTEST -v -fuzztime $(CANNON64_FUZZTIME) -fuzz=FuzzStateSyscallCloneMT ./mipsevm/tests" \
+	| parallel -j 8 {}
 
 .PHONY: \
 	cannon32-impl \

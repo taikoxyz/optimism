@@ -72,7 +72,7 @@ func NewL2AltDA(t helpers.Testing, params ...AltDAParam) *L2AltDA {
 	l1Client := miner.EthClient()
 
 	jwtPath := e2eutils.WriteDefaultJWT(t)
-	engine := helpers.NewL2Engine(t, log, sd.L2Cfg, sd.RollupCfg.Genesis.L1, jwtPath)
+	engine := helpers.NewL2Engine(t, log, sd.L2Cfg, jwtPath)
 	engCl := engine.EngineClient(t, sd.RollupCfg)
 
 	storage := &altda.DAErrFaker{Client: altda.NewMockDAClient(log)}
@@ -85,7 +85,7 @@ func NewL2AltDA(t helpers.Testing, params ...AltDAParam) *L2AltDA {
 
 	daMgr := altda.NewAltDAWithStorage(log, altDACfg, storage, &altda.NoopMetrics{})
 
-	sequencer := helpers.NewL2Sequencer(t, log, l1F, miner.BlobStore(), daMgr, engCl, sd.RollupCfg, 0, nil)
+	sequencer := helpers.NewL2Sequencer(t, log, l1F, miner.BlobStore(), daMgr, engCl, sd.RollupCfg, 0)
 	miner.ActL1SetFeeRecipient(common.Address{'A'})
 	sequencer.ActL2PipelineFull(t)
 
@@ -136,14 +136,14 @@ func (a *L2AltDA) StorageClient() *altda.DAErrFaker {
 
 func (a *L2AltDA) NewVerifier(t helpers.Testing) *helpers.L2Verifier {
 	jwtPath := e2eutils.WriteDefaultJWT(t)
-	engine := helpers.NewL2Engine(t, a.log, a.sd.L2Cfg, a.sd.RollupCfg.Genesis.L1, jwtPath)
+	engine := helpers.NewL2Engine(t, a.log, a.sd.L2Cfg, jwtPath)
 	engCl := engine.EngineClient(t, a.sd.RollupCfg)
 	l1F, err := sources.NewL1Client(a.miner.RPCClient(), a.log, nil, sources.L1ClientDefaultConfig(a.sd.RollupCfg, false, sources.RPCKindBasic))
 	require.NoError(t, err)
 
 	daMgr := altda.NewAltDAWithStorage(a.log, a.altDACfg, a.storage, &altda.NoopMetrics{})
 
-	verifier := helpers.NewL2Verifier(t, a.log, l1F, a.miner.BlobStore(), daMgr, engCl, a.sd.RollupCfg, &sync.Config{}, safedb.Disabled, nil)
+	verifier := helpers.NewL2Verifier(t, a.log, l1F, a.miner.BlobStore(), daMgr, engCl, a.sd.RollupCfg, &sync.Config{}, safedb.Disabled)
 
 	return verifier
 }

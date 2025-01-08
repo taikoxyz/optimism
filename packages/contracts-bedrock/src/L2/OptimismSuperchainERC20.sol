@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.25;
 
-import { IOptimismSuperchainERC20 } from "src/L2/interfaces/IOptimismSuperchainERC20.sol";
-import { Predeploys } from "src/libraries/Predeploys.sol";
-import { ERC165 } from "@openzeppelin/contracts-v5/utils/introspection/ERC165.sol";
-import { SuperchainERC20 } from "src/L2/SuperchainERC20.sol";
+// Contracts
 import { Initializable } from "@openzeppelin/contracts-v5/proxy/utils/Initializable.sol";
+import { SuperchainERC20 } from "src/L2/SuperchainERC20.sol";
+
+// Libraries
+import { Predeploys } from "src/libraries/Predeploys.sol";
 import { ZeroAddress, Unauthorized } from "src/libraries/errors/CommonErrors.sol";
+
+// Interfaces
+import { IOptimismSuperchainERC20 } from "interfaces/L2/IOptimismSuperchainERC20.sol";
 
 /// @custom:proxied true
 /// @title OptimismSuperchainERC20
@@ -16,7 +20,7 @@ import { ZeroAddress, Unauthorized } from "src/libraries/errors/CommonErrors.sol
 ///         OptimismSuperchainERC20 token, turning it fungible and interoperable across the superchain. Likewise, it
 ///         also enables the inverse conversion path.
 ///         Moreover, it builds on top of the L2ToL2CrossDomainMessenger for both replay protection and domain binding.
-contract OptimismSuperchainERC20 is SuperchainERC20, Initializable, ERC165 {
+contract OptimismSuperchainERC20 is SuperchainERC20, Initializable {
     /// @notice Emitted whenever tokens are minted for an account.
     /// @param to Address of the account tokens are being minted for.
     /// @param amount  Amount of tokens minted.
@@ -59,8 +63,8 @@ contract OptimismSuperchainERC20 is SuperchainERC20, Initializable, ERC165 {
     }
 
     /// @notice Semantic version.
-    /// @custom:semver 1.0.0-beta.8
-    string public constant override version = "1.0.0-beta.8";
+    /// @custom:semver 1.0.0-beta.12
+    string public constant override version = "1.0.0-beta.12";
 
     /// @notice Constructs the OptimismSuperchainERC20 contract.
     constructor() {

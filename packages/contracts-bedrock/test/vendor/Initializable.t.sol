@@ -2,32 +2,30 @@
 pragma solidity 0.8.15;
 
 // Testing
-import { Bridge_Initializer } from "test/setup/Bridge_Initializer.sol";
+import { CommonTest } from "test/setup/CommonTest.sol";
 
 // Scripts
-import { Executables } from "scripts/libraries/Executables.sol";
 import { ForgeArtifacts } from "scripts/libraries/ForgeArtifacts.sol";
 import { Process } from "scripts/libraries/Process.sol";
 
 // Libraries
 import { LibString } from "@solady/utils/LibString.sol";
 import { Constants } from "src/libraries/Constants.sol";
-import "src/dispute/lib/Types.sol";
-import "scripts/deploy/Deployer.sol";
+import { GameType } from "src/dispute/lib/Types.sol";
 
 // Interfaces
-import { ISystemConfig } from "src/L1/interfaces/ISystemConfig.sol";
-import { IResourceMetering } from "src/L1/interfaces/IResourceMetering.sol";
-import { ISuperchainConfig } from "src/L1/interfaces/ISuperchainConfig.sol";
-import { ProtocolVersion } from "src/L1/interfaces/IProtocolVersions.sol";
-import { IAnchorStateRegistry } from "src/dispute/interfaces/IAnchorStateRegistry.sol";
+import { ISystemConfig } from "interfaces/L1/ISystemConfig.sol";
+import { IResourceMetering } from "interfaces/L1/IResourceMetering.sol";
+import { ISuperchainConfig } from "interfaces/L1/ISuperchainConfig.sol";
+import { ProtocolVersion } from "interfaces/L1/IProtocolVersions.sol";
+import { IAnchorStateRegistry } from "interfaces/dispute/IAnchorStateRegistry.sol";
 
 /// @title Initializer_Test
 /// @dev Ensures that the `initialize()` function on contracts cannot be called more than
 ///      once. This contract inherits from `ERC721Bridge_Initializer` because it is the
 ///      deepest contract in the inheritance chain for setting up the system contracts.
 ///      For each L1 contract both the implementation and the proxy are tested.
-contract Initializer_Test is Bridge_Initializer {
+contract Initializer_Test is CommonTest {
     /// @notice Contains the address of an `Initializable` contract and the calldata
     ///         used to initialize it.
     struct InitializeableContract {
@@ -46,17 +44,20 @@ contract Initializer_Test is Bridge_Initializer {
 
     function setUp() public override {
         super.enableAltDA();
-        super.enableLegacyContracts();
         super.setUp();
 
         // Initialize the `contracts` array with the addresses of the contracts to test, the
         // calldata used to initialize them, and the storage slot of their `_initialized` flag.
+        // This array should contain all initializable L1 contracts. L2 contract initialization is
+        // tested in Predeploys.t.sol.
+        // The 'name' field should be the name of the contract as it saved in the deployment
+        // script.
 
         // SuperchainConfigImpl
         contracts.push(
             InitializeableContract({
-                name: "SuperchainConfig",
-                target: deploy.mustGetAddress("SuperchainConfig"),
+                name: "SuperchainConfigImpl",
+                target: deploy.mustGetAddress("SuperchainConfigImpl"),
                 initCalldata: abi.encodeCall(superchainConfig.initialize, (address(0), false))
             })
         );
@@ -71,10 +72,10 @@ contract Initializer_Test is Bridge_Initializer {
         // L1CrossDomainMessengerImpl
         contracts.push(
             InitializeableContract({
-                name: "L1CrossDomainMessenger",
-                target: deploy.mustGetAddress("L1CrossDomainMessenger"),
+                name: "L1CrossDomainMessengerImpl",
+                target: deploy.mustGetAddress("L1CrossDomainMessengerImpl"),
                 initCalldata: abi.encodeCall(
-                    l1CrossDomainMessenger.initialize, (superchainConfig, optimismPortal, systemConfig)
+                    l1CrossDomainMessenger.initialize, (superchainConfig, optimismPortal2, systemConfig)
                 )
             })
         );
@@ -84,15 +85,15 @@ contract Initializer_Test is Bridge_Initializer {
                 name: "L1CrossDomainMessengerProxy",
                 target: address(l1CrossDomainMessenger),
                 initCalldata: abi.encodeCall(
-                    l1CrossDomainMessenger.initialize, (superchainConfig, optimismPortal, systemConfig)
+                    l1CrossDomainMessenger.initialize, (superchainConfig, optimismPortal2, systemConfig)
                 )
             })
         );
         // DisputeGameFactoryImpl
         contracts.push(
             InitializeableContract({
-                name: "DisputeGameFactory",
-                target: deploy.mustGetAddress("DisputeGameFactory"),
+                name: "DisputeGameFactoryImpl",
+                target: deploy.mustGetAddress("DisputeGameFactoryImpl"),
                 initCalldata: abi.encodeCall(disputeGameFactory.initialize, (address(0)))
             })
         );
@@ -107,8 +108,8 @@ contract Initializer_Test is Bridge_Initializer {
         // DelayedWETHImpl
         contracts.push(
             InitializeableContract({
-                name: "DelayedWETH",
-                target: deploy.mustGetAddress("DelayedWETH"),
+                name: "DelayedWETHImpl",
+                target: deploy.mustGetAddress("DelayedWETHImpl"),
                 initCalldata: abi.encodeCall(delayedWeth.initialize, (address(0), ISuperchainConfig(address(0))))
             })
         );
@@ -120,43 +121,27 @@ contract Initializer_Test is Bridge_Initializer {
                 initCalldata: abi.encodeCall(delayedWeth.initialize, (address(0), ISuperchainConfig(address(0))))
             })
         );
-        // L2OutputOracleImpl
-        contracts.push(
-            InitializeableContract({
-                name: "L2OutputOracle",
-                target: deploy.mustGetAddress("L2OutputOracle"),
-                initCalldata: abi.encodeCall(l2OutputOracle.initialize, (0, 0, 0, 0, address(0), address(0), 0))
-            })
-        );
-        // L2OutputOracleProxy
-        contracts.push(
-            InitializeableContract({
-                name: "L2OutputOracleProxy",
-                target: address(l2OutputOracle),
-                initCalldata: abi.encodeCall(l2OutputOracle.initialize, (0, 0, 0, 0, address(0), address(0), 0))
-            })
-        );
-        // OptimismPortalImpl
-        contracts.push(
-            InitializeableContract({
-                name: "OptimismPortal",
-                target: deploy.mustGetAddress("OptimismPortal"),
-                initCalldata: abi.encodeCall(optimismPortal.initialize, (l2OutputOracle, systemConfig, superchainConfig))
-            })
-        );
-        // OptimismPortalProxy
-        contracts.push(
-            InitializeableContract({
-                name: "OptimismPortalProxy",
-                target: address(optimismPortal),
-                initCalldata: abi.encodeCall(optimismPortal.initialize, (l2OutputOracle, systemConfig, superchainConfig))
-            })
-        );
         // OptimismPortal2Impl
         contracts.push(
             InitializeableContract({
-                name: "OptimismPortal2",
-                target: deploy.mustGetAddress("OptimismPortal2"),
+                name: "OptimismPortal2Impl",
+                target: deploy.mustGetAddress("OptimismPortal2Impl"),
+                initCalldata: abi.encodeCall(
+                    optimismPortal2.initialize,
+                    (
+                        disputeGameFactory,
+                        systemConfig,
+                        superchainConfig,
+                        GameType.wrap(uint32(deploy.cfg().respectedGameType()))
+                    )
+                )
+            })
+        );
+        // OptimismPortal2Proxy
+        contracts.push(
+            InitializeableContract({
+                name: "OptimismPortal2Proxy",
+                target: address(optimismPortal2),
                 initCalldata: abi.encodeCall(
                     optimismPortal2.initialize,
                     (
@@ -171,8 +156,8 @@ contract Initializer_Test is Bridge_Initializer {
         // SystemConfigImpl
         contracts.push(
             InitializeableContract({
-                name: "SystemConfig",
-                target: deploy.mustGetAddress("SystemConfig"),
+                name: "SystemConfigImpl",
+                target: deploy.mustGetAddress("SystemConfigImpl"),
                 initCalldata: abi.encodeCall(
                     systemConfig.initialize,
                     (
@@ -243,8 +228,8 @@ contract Initializer_Test is Bridge_Initializer {
         // ProtocolVersionsImpl
         contracts.push(
             InitializeableContract({
-                name: "ProtocolVersions",
-                target: deploy.mustGetAddress("ProtocolVersions"),
+                name: "ProtocolVersionsImpl",
+                target: deploy.mustGetAddress("ProtocolVersionsImpl"),
                 initCalldata: abi.encodeCall(
                     protocolVersions.initialize, (address(0), ProtocolVersion.wrap(1), ProtocolVersion.wrap(2))
                 )
@@ -260,19 +245,11 @@ contract Initializer_Test is Bridge_Initializer {
                 )
             })
         );
-        // L2CrossDomainMessenger
-        contracts.push(
-            InitializeableContract({
-                name: "L2CrossDomainMessenger",
-                target: address(l2CrossDomainMessenger),
-                initCalldata: abi.encodeCall(l2CrossDomainMessenger.initialize, (l1CrossDomainMessenger))
-            })
-        );
         // L1StandardBridgeImpl
         contracts.push(
             InitializeableContract({
-                name: "L1StandardBridge",
-                target: deploy.mustGetAddress("L1StandardBridge"),
+                name: "L1StandardBridgeImpl",
+                target: deploy.mustGetAddress("L1StandardBridgeImpl"),
                 initCalldata: abi.encodeCall(
                     l1StandardBridge.initialize, (l1CrossDomainMessenger, superchainConfig, systemConfig)
                 )
@@ -288,27 +265,11 @@ contract Initializer_Test is Bridge_Initializer {
                 )
             })
         );
-        // L2StandardBridge
-        contracts.push(
-            InitializeableContract({
-                name: "L2StandardBridge",
-                target: address(l2StandardBridge),
-                initCalldata: abi.encodeCall(l2StandardBridge.initialize, (l1StandardBridge))
-            })
-        );
-        // L2StandardBridgeInterop
-        contracts.push(
-            InitializeableContract({
-                name: "L2StandardBridgeInterop",
-                target: address(l2StandardBridge),
-                initCalldata: abi.encodeCall(l2StandardBridge.initialize, (l1StandardBridge))
-            })
-        );
         // L1ERC721BridgeImpl
         contracts.push(
             InitializeableContract({
-                name: "L1ERC721Bridge",
-                target: deploy.mustGetAddress("L1ERC721Bridge"),
+                name: "L1ERC721BridgeImpl",
+                target: deploy.mustGetAddress("L1ERC721BridgeImpl"),
                 initCalldata: abi.encodeCall(l1ERC721Bridge.initialize, (l1CrossDomainMessenger, superchainConfig))
             })
         );
@@ -320,19 +281,11 @@ contract Initializer_Test is Bridge_Initializer {
                 initCalldata: abi.encodeCall(l1ERC721Bridge.initialize, (l1CrossDomainMessenger, superchainConfig))
             })
         );
-        // L2ERC721Bridge
-        contracts.push(
-            InitializeableContract({
-                name: "L2ERC721Bridge",
-                target: address(l2ERC721Bridge),
-                initCalldata: abi.encodeCall(l2ERC721Bridge.initialize, (payable(address(l1ERC721Bridge))))
-            })
-        );
         // OptimismMintableERC20FactoryImpl
         contracts.push(
             InitializeableContract({
-                name: "OptimismMintableERC20Factory",
-                target: deploy.mustGetAddress("OptimismMintableERC20Factory"),
+                name: "OptimismMintableERC20FactoryImpl",
+                target: deploy.mustGetAddress("OptimismMintableERC20FactoryImpl"),
                 initCalldata: abi.encodeCall(l1OptimismMintableERC20Factory.initialize, (address(l1StandardBridge)))
             })
         );
@@ -347,8 +300,8 @@ contract Initializer_Test is Bridge_Initializer {
         // DataAvailabilityChallengeImpl
         contracts.push(
             InitializeableContract({
-                name: "DataAvailabilityChallenge",
-                target: deploy.mustGetAddress("DataAvailabilityChallenge"),
+                name: "DataAvailabilityChallengeImpl",
+                target: deploy.mustGetAddress("DataAvailabilityChallengeImpl"),
                 initCalldata: abi.encodeCall(dataAvailabilityChallenge.initialize, (address(0), 0, 0, 0, 0))
             })
         );
@@ -363,7 +316,7 @@ contract Initializer_Test is Bridge_Initializer {
         // AnchorStateRegistry
         contracts.push(
             InitializeableContract({
-                name: "AnchorStateRegistry",
+                name: "AnchorStateRegistryImpl",
                 target: address(anchorStateRegistry),
                 initCalldata: abi.encodeCall(
                     anchorStateRegistry.initialize,
@@ -382,9 +335,6 @@ contract Initializer_Test is Bridge_Initializer {
                 )
             })
         );
-
-        // Nicknamed contracts.
-        nicknames["OptimismPortal2Proxy"] = "OptimismPortalProxy";
     }
 
     /// @notice Tests that:
@@ -412,8 +362,8 @@ contract Initializer_Test is Bridge_Initializer {
         // TODO: Eventually remove this exclusion. Same reason as above dispute contracts.
         excludes[6] = "src/L1/OPContractsManager.sol";
         excludes[7] = "src/L1/OPContractsManagerInterop.sol";
-        // The L2OutputOracle is not always deployed (and is no longer being modified)
-        excludes[8] = "src/L1/L2OutputOracle.sol";
+        // L2 contract initialization is tested in Predeploys.t.sol
+        excludes[8] = "src/L2/*";
 
         // Get all contract names in the src directory, minus the excluded contracts.
         string[] memory contractNames = ForgeArtifacts.getContractNames("src/*", excludes);
@@ -432,27 +382,21 @@ contract Initializer_Test is Bridge_Initializer {
             }
 
             // Construct the query for the initialize function in the contract's ABI.
-            string[] memory command = new string[](3);
-            command[0] = Executables.bash;
-            command[1] = "-c";
-            command[2] = string.concat(
-                Executables.echo,
-                " '",
+            string memory cmd = string.concat(
+                "echo '",
                 ForgeArtifacts.getAbi(contractName),
-                "'",
-                " | ",
-                Executables.jq,
-                " '.[] | select(.name == \"initialize\" and .type == \"function\")'"
+                "' | jq '.[] | select(.name == \"initialize\" and .type == \"function\")'"
             );
 
             // If the contract does not have an `initialize()` function, skip it.
-            if (Process.run(command).length == 0) {
+            if (bytes(Process.bash(cmd)).length == 0) {
                 continue;
             }
 
             // Check if this contract is in the contracts array.
             assertTrue(
-                _hasMatchingContract(contractName), string.concat("Missing ", contractName, " from contracts array")
+                _hasMatchingContract(string.concat(contractName, "Impl")),
+                string.concat("Missing ", contractName, " from contracts array")
             );
 
             // If the contract is proxied, check that the proxy is in the contracts array.
@@ -471,11 +415,13 @@ contract Initializer_Test is Bridge_Initializer {
         // Attempt to re-initialize all contracts within the `contracts` array.
         for (uint256 i; i < contracts.length; i++) {
             InitializeableContract memory _contract = contracts[i];
-            string memory name = _getRealContractName(_contract.name);
+            string memory deploymentName = _getRealContractName(_contract.name);
 
             // Grab the value of the "initialized" storage slot.
-            uint8 initializedSlotVal;
-            initializedSlotVal = deploy.loadInitializedSlot(name);
+            uint8 initializedSlotVal = deploy.loadInitializedSlot({
+                _sourceName: _removeSuffix(deploymentName),
+                _deploymentName: deploymentName
+            });
 
             // Assert that the contract is already initialized.
             assertTrue(
@@ -497,7 +443,8 @@ contract Initializer_Test is Bridge_Initializer {
     function _hasMatchingContract(string memory _name) internal view returns (bool matching_) {
         for (uint256 i; i < contracts.length; i++) {
             if (LibString.eq(contracts[i].name, _getRealContractName(_name))) {
-                matching_ = true;
+                // return early
+                return true;
             }
         }
     }
@@ -525,6 +472,16 @@ contract Initializer_Test is Bridge_Initializer {
             }
         } else {
             revert("Initializer_Test: Invalid returndata format. Expected `Error(string)`");
+        }
+    }
+
+    /// @dev Removes the `Proxy` or `Impl` suffix from the contract name.
+    function _removeSuffix(string memory _contractName) internal pure returns (string memory deploymentName_) {
+        if (LibString.endsWith(_contractName, "Proxy")) {
+            deploymentName_ = LibString.slice(_contractName, 0, bytes(_contractName).length - 5);
+        }
+        if (LibString.endsWith(_contractName, "Impl")) {
+            deploymentName_ = LibString.slice(_contractName, 0, bytes(_contractName).length - 4);
         }
     }
 }

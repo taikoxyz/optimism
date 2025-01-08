@@ -93,6 +93,7 @@ contract GasPriceOracleBedrock_Test is GasPriceOracle_Test {
 
     /// @dev Tests that `setGasPrice` reverts since it was removed in bedrock.
     function test_setGasPrice_doesNotExist_reverts() external {
+        // nosemgrep: sol-style-use-abi-encodecall
         (bool success, bytes memory returndata) =
             address(gasPriceOracle).call(abi.encodeWithSignature("setGasPrice(uint256)", 1));
 
@@ -102,6 +103,7 @@ contract GasPriceOracleBedrock_Test is GasPriceOracle_Test {
 
     /// @dev Tests that `setL1BaseFee` reverts since it was removed in bedrock.
     function test_setL1BaseFee_doesNotExist_reverts() external {
+        // nosemgrep: sol-style-use-abi-encodecall
         (bool success, bytes memory returndata) =
             address(gasPriceOracle).call(abi.encodeWithSignature("setL1BaseFee(uint256)", 1));
 
@@ -114,6 +116,26 @@ contract GasPriceOracleBedrock_Test is GasPriceOracle_Test {
         vm.prank(depositor);
         vm.expectRevert("GasPriceOracle: Fjord can only be activated after Ecotone");
         gasPriceOracle.setFjord();
+    }
+
+    /// @dev Tests that `getL1Fee` returns the expected value when both fjord and ecotone are not active
+    function test_getL1Fee_whenFjordAndEcotoneNotActive_succeeds() external {
+        vm.store(address(gasPriceOracle), bytes32(uint256(0)), bytes32(0));
+        bytes memory data = hex"1111";
+
+        uint256 price = gasPriceOracle.getL1Fee(data);
+        assertEq(price, 28_600); // ((((16 * data.length(i.e 2)) * (68 * 16)) + l1FeeOverhead(i.e. 310)) *
+            // l1BaseFee(i.e. 2M) *
+            // l1FeeScalar(i.e. 10)) / 1e6
+    }
+
+    /// @dev Tests that `getL1GasUsed` returns the expected value when both fjord and ecotone are not active
+    function test_getL1GasUsed_whenFjordAndEcotoneNotActive_succeeds() external {
+        vm.store(address(gasPriceOracle), bytes32(uint256(0)), bytes32(0));
+        bytes memory data = hex"1111";
+
+        uint256 gas = gasPriceOracle.getL1GasUsed(data);
+        assertEq(gas, 1_430); // 1398 + (16 * data.length(i.e 2))
     }
 }
 

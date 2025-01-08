@@ -12,6 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/log"
+
 	"github.com/ethereum-optimism/optimism/cannon/mipsevm"
 	"github.com/ethereum-optimism/optimism/op-challenger/config"
 	"github.com/ethereum-optimism/optimism/op-challenger/game/fault/contracts"
@@ -25,8 +28,6 @@ import (
 	opmetrics "github.com/ethereum-optimism/optimism/op-service/metrics"
 	"github.com/ethereum-optimism/optimism/op-service/sources"
 	"github.com/ethereum-optimism/optimism/op-service/sources/batching"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/log"
 )
 
 var (
@@ -35,9 +36,8 @@ var (
 
 type Metricer interface {
 	contractMetrics.ContractMetricer
+	metrics.VmMetricer
 
-	RecordVmExecutionTime(vmType string, t time.Duration)
-	RecordVmMemoryUsed(vmType string, memoryUsed uint64)
 	RecordFailure(vmType string)
 	RecordInvalid(vmType string)
 	RecordSuccess(vmType string)
@@ -159,7 +159,7 @@ func (r *Runner) runAndRecordOnce(ctx context.Context, runConfig RunConfig, clie
 }
 
 func (r *Runner) runOnce(ctx context.Context, logger log.Logger, name string, traceType types.TraceType, prestateHash common.Hash, localInputs utils.LocalGameInputs, dir string) error {
-	provider, err := createTraceProvider(ctx, logger, metrics.NewVmMetrics(r.m, name), r.cfg, prestateHash, traceType, localInputs, dir)
+	provider, err := createTraceProvider(ctx, logger, metrics.NewTypedVmMetrics(r.m, name), r.cfg, prestateHash, traceType, localInputs, dir)
 	if err != nil {
 		return fmt.Errorf("failed to create trace provider: %w", err)
 	}
@@ -198,6 +198,9 @@ func (r *Runner) createGameInputs(ctx context.Context, client *sources.RollupCli
 		// Restrict the L1 head to a block that has actually be processed by op-node.
 		// This only matters if op-node is behind and hasn't processed all finalized L1 blocks yet.
 		l1Head = status.CurrentL1
+	}
+	if l1Head.Number == 0 {
+		return utils.LocalGameInputs{}, errors.New("l1 head is 0")
 	}
 	blockNumber, err := r.findL2BlockNumberToDispute(ctx, client, l1Head.Number, status.FinalizedL2.Number)
 	if err != nil {

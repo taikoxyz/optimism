@@ -2,18 +2,18 @@
 pragma solidity 0.8.15;
 
 // Testing
-import { Bridge_Initializer } from "test/setup/Bridge_Initializer.sol";
+import { CommonTest } from "test/setup/CommonTest.sol";
 
 // Interfaces
-import { IMintableAndBurnableERC20 } from "src/L2/interfaces/IMintableAndBurnableERC20.sol";
-import { IL2StandardBridgeInterop } from "src/L2/interfaces/IL2StandardBridgeInterop.sol";
+import { IMintableAndBurnableERC20 } from "interfaces/L2/IMintableAndBurnableERC20.sol";
+import { IL2StandardBridgeInterop } from "interfaces/L2/IL2StandardBridgeInterop.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import { IOptimismMintableERC20 } from "src/universal/interfaces/IOptimismMintableERC20.sol";
+import { IOptimismMintableERC20 } from "interfaces/universal/IOptimismMintableERC20.sol";
 import { ILegacyMintableERC20 } from "src/universal/OptimismMintableERC20.sol";
-import { IOptimismERC20Factory } from "src/L2/interfaces/IOptimismERC20Factory.sol";
+import { IOptimismERC20Factory } from "interfaces/L2/IOptimismERC20Factory.sol";
 
-contract L2StandardBridgeInterop_Test is Bridge_Initializer {
+contract L2StandardBridgeInterop_Test is CommonTest {
     /// @notice Emitted when a conversion is made.
     event Converted(address indexed from, address indexed to, address indexed caller, uint256 amount);
 
@@ -31,26 +31,31 @@ contract L2StandardBridgeInterop_Test is Bridge_Initializer {
 
     /// @notice Mock ERC20 decimals
     function _mockDecimals(address _token, uint8 _decimals) internal {
-        _mockAndExpect(_token, abi.encodeWithSelector(IERC20Metadata.decimals.selector), abi.encode(_decimals));
+        _mockAndExpect(_token, abi.encodeCall(IERC20Metadata.decimals, ()), abi.encode(_decimals));
     }
 
     /// @notice Mock ERC165 interface
     function _mockInterface(address _token, bytes4 _interfaceId, bool _supported) internal {
-        _mockAndExpect(
-            _token, abi.encodeWithSelector(IERC165.supportsInterface.selector, _interfaceId), abi.encode(_supported)
-        );
+        _mockAndExpect(_token, abi.encodeCall(IERC165.supportsInterface, (_interfaceId)), abi.encode(_supported));
     }
 
     /// @notice Mock factory deployment
     function _mockDeployments(address _factory, address _token, address _deployed) internal {
-        _mockAndExpect(
-            _factory, abi.encodeWithSelector(IOptimismERC20Factory.deployments.selector, _token), abi.encode(_deployed)
-        );
+        _mockAndExpect(_factory, abi.encodeCall(IOptimismERC20Factory.deployments, (_token)), abi.encode(_deployed));
     }
 
     /// @notice Assume a valid address for fuzzing
     function _assumeAddress(address _address) internal {
         assumeAddressIsNot(_address, AddressType.Precompile, AddressType.ForgeAddress);
+    }
+}
+
+/// @notice Test suite for getter functions.
+contract L2StandardBridgeInterop_Getters_Test is L2StandardBridgeInterop_Test {
+    /// @notice Tests that the version function returns a valid string. We avoid testing the
+    ///         specific value of the string as it changes frequently.
+    function test_version_succeeds() external view {
+        assert(bytes(l2StandardBridge.version()).length > 0);
     }
 }
 
@@ -198,12 +203,8 @@ contract L2StandardBridgeInterop_LegacyToSuper_Test is L2StandardBridgeInterop_T
         emit Converted(_from, _to, _caller, _amount);
 
         // Mock and expect the `burn` and `mint` functions
-        _mockAndExpect(
-            _from, abi.encodeWithSelector(IMintableAndBurnableERC20.burn.selector, _caller, _amount), abi.encode()
-        );
-        _mockAndExpect(
-            _to, abi.encodeWithSelector(IMintableAndBurnableERC20.mint.selector, _caller, _amount), abi.encode()
-        );
+        _mockAndExpect(_from, abi.encodeCall(IMintableAndBurnableERC20.burn, (_caller, _amount)), abi.encode());
+        _mockAndExpect(_to, abi.encodeCall(IMintableAndBurnableERC20.mint, (_caller, _amount)), abi.encode());
 
         // Act
         vm.prank(_caller);
@@ -356,12 +357,8 @@ contract L2StandardBridgeInterop_SuperToLegacy_Test is L2StandardBridgeInterop_T
         emit Converted(_from, _to, _caller, _amount);
 
         // Mock and expect the `burn` and `mint` functions
-        _mockAndExpect(
-            _from, abi.encodeWithSelector(IMintableAndBurnableERC20.burn.selector, _caller, _amount), abi.encode()
-        );
-        _mockAndExpect(
-            _to, abi.encodeWithSelector(IMintableAndBurnableERC20.mint.selector, _caller, _amount), abi.encode()
-        );
+        _mockAndExpect(_from, abi.encodeCall(IMintableAndBurnableERC20.burn, (_caller, _amount)), abi.encode());
+        _mockAndExpect(_to, abi.encodeCall(IMintableAndBurnableERC20.mint, (_caller, _amount)), abi.encode());
 
         // Act
         vm.prank(_caller);

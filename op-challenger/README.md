@@ -1,7 +1,7 @@
 # op-challenger
 
 The `op-challenger` is a modular **op-stack** challenge agent written in
-golang for dispute games including, but not limited to,attestation games,
+golang for dispute games including, but not limited to, attestation games,
 fault games, and validity games. To learn more about dispute games, visit
 the [fault proof specs][proof-specs].
 
@@ -187,17 +187,17 @@ Prints the list of current claims in a dispute game.
 
 ```shell
 ./bin/op-challenger run-trace \
-  --network <PREDEFINED_NETWORK> \
+  --network=<NETWORK_NAME> \
   --l1-eth-rpc=<L1_ETH_RPC> \
   --l1-beacon=<L1_BEACON> \
   --l2-eth-rpc=<L2_ETH_RPC> \
   --rollup-rpc=<ROLLUP_RPC> \
-  --data-dir=<DATA_DIR> \
+  --datadir=<DATA_DIR> \
   --prestates-url=<PRESTATES_URL> \
   --run=<RUN_CONFIG>
 ```
 
-* `PREDEFINED_NETWORK` - the name of a predefined L2 network.
+* `NETWORK_NAME` - the name of a predefined L2 network.
 * `L1_ETH_RPC` - the RPC endpoint of the L1 endpoint to use (e.g. `http://localhost:8545`).
 * `L1_BEACON` - the REST endpoint of the L1 beacon node to use (e.g. `http://localhost:5100`).
 * `L2_ETH_RPC` - the RPC endpoint of the L2 execution client to use

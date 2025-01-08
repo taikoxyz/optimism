@@ -3,9 +3,9 @@ pragma solidity ^0.8.13;
 
 import { DeploymentSummaryFaultProofs } from "./utils/DeploymentSummaryFaultProofs.sol";
 import { KontrolUtils } from "./utils/KontrolUtils.sol";
-import { IL1ERC721Bridge as L1ERC721Bridge } from "src/L1/interfaces/IL1ERC721Bridge.sol";
-import { ISuperchainConfig as SuperchainConfig } from "src/L1/interfaces/ISuperchainConfig.sol";
-import { ICrossDomainMessenger as CrossDomainMessenger } from "src/universal/interfaces/ICrossDomainMessenger.sol";
+import { IL1ERC721Bridge as L1ERC721Bridge } from "interfaces/L1/IL1ERC721Bridge.sol";
+import { ISuperchainConfig as SuperchainConfig } from "interfaces/L1/ISuperchainConfig.sol";
+import { ICrossDomainMessenger as CrossDomainMessenger } from "interfaces/universal/ICrossDomainMessenger.sol";
 
 contract L1ERC721BridgeKontrol is DeploymentSummaryFaultProofs, KontrolUtils {
     L1ERC721Bridge l1ERC721Bridge;
@@ -34,7 +34,7 @@ contract L1ERC721BridgeKontrol is DeploymentSummaryFaultProofs, KontrolUtils {
 
         vm.mockCall(
             address(l1ERC721Bridge.messenger()),
-            abi.encodeWithSelector(CrossDomainMessenger.xDomainMessageSender.selector),
+            abi.encodeCall(CrossDomainMessenger.xDomainMessageSender, ()),
             abi.encode(address(l1ERC721Bridge.otherBridge()))
         );
 

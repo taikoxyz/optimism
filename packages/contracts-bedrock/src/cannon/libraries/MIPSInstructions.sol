@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.15;
+pragma solidity ^0.8.0;
 
+// Libraries
 import { MIPSMemory } from "src/cannon/libraries/MIPSMemory.sol";
 import { MIPSState as st } from "src/cannon/libraries/MIPSState.sol";
 
@@ -494,6 +495,11 @@ library MIPSInstructions {
                 uint32 rtv = ((_insn >> 16) & 0x1F);
                 if (rtv == 0) {
                     shouldBranch = int32(_rs) < 0;
+                }
+                // bltzal
+                if (rtv == 0x10) {
+                    shouldBranch = int32(_rs) < 0;
+                    _registers[31] = _cpu.pc + 8; // always set regardless of branch taken
                 }
                 if (rtv == 1) {
                     shouldBranch = int32(_rs) >= 0;

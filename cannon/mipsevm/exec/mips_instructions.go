@@ -22,14 +22,20 @@ const (
 )
 
 func GetInstructionDetails(pc Word, memory *memory.Memory) (insn, opcode, fun uint32) {
-	insn = memory.GetUint32(pc)
+	if pc&0x3 != 0 {
+		panic(fmt.Errorf("invalid pc: %x", pc))
+	}
+	word := memory.GetWord(pc & arch.AddressMask)
+	insn = uint32(SelectSubWord(pc, word, 4, false))
 	opcode = insn >> 26 // First 6-bits
 	fun = insn & 0x3f   // Last 6-bits
 
 	return insn, opcode, fun
 }
 
-func ExecMipsCoreStepLogic(cpu *mipsevm.CpuScalars, registers *[32]Word, memory *memory.Memory, insn, opcode, fun uint32, memTracker MemTracker, stackTracker StackTracker) (memUpdated bool, memAddr Word, err error) {
+// ExecMipsCoreStepLogic executes a MIPS instruction that isn't a syscall nor a RMW operation
+// If a store operation occurred, then it returns the effective address of the store memory location.
+func ExecMipsCoreStepLogic(cpu *mipsevm.CpuScalars, registers *[32]Word, memory *memory.Memory, insn, opcode, fun uint32, memTracker MemTracker, stackTracker StackTracker) (memUpdated bool, effMemAddr Word, err error) {
 	// j-type j/jal
 	if opcode == 2 || opcode == 3 {
 		linkReg := Word(0)
@@ -149,7 +155,7 @@ func ExecMipsCoreStepLogic(cpu *mipsevm.CpuScalars, registers *[32]Word, memory 
 		memTracker.TrackMemAccess(storeAddr)
 		memory.SetWord(storeAddr, val)
 		memUpdated = true
-		memAddr = storeAddr
+		effMemAddr = storeAddr
 	}
 
 	// write back the value to destination register
@@ -163,7 +169,7 @@ func SignExtendImmediate(insn uint32) Word {
 
 func assertMips64(insn uint32) {
 	if arch.IsMips32 {
-		panic(fmt.Sprintf("invalid instruction: %x", insn))
+		panic(fmt.Sprintf("invalid instruction: 0x%08x", insn))
 	}
 }
 
@@ -321,7 +327,7 @@ func ExecuteMipsInstruction(insn uint32, opcode uint32, fun uint32, rs, rt, mem 
 			assertMips64(insn)
 			return Word(int64(rt) >> (((insn >> 6) & 0x1f) + 32))
 		default:
-			panic(fmt.Sprintf("invalid instruction: %x", insn))
+			panic(fmt.Sprintf("invalid instruction: 0x%08x", insn))
 		}
 	} else {
 		switch opcode {
@@ -374,7 +380,7 @@ func ExecuteMipsInstruction(insn uint32, opcode uint32, fun uint32, rs, rt, mem 
 				w := uint32(SelectSubWord(rs, mem, 4, false))
 				val := w >> (24 - (rs&3)*8)
 				mask := uint32(0xFFFFFFFF) >> (24 - (rs&3)*8)
-				lwrResult := ((uint32(rt) & ^mask) | val) & 0xFFFFFFFF
+				lwrResult := (uint32(rt) & ^mask) | val
 				if rs&3 == 3 { // loaded bit 31
 					return SignExtend(Word(lwrResult), 32)
 				} else {
@@ -449,10 +455,10 @@ func ExecuteMipsInstruction(insn uint32, opcode uint32, fun uint32, rs, rt, mem 
 			assertMips64(insn)
 			return rt
 		default:
-			panic("invalid instruction")
+			panic(fmt.Sprintf("invalid instruction: %x", insn))
 		}
 	}
-	panic("invalid instruction")
+	panic(fmt.Sprintf("invalid instruction: %x", insn))
 }
 
 func SignExtend(dat Word, idx Word) Word {
@@ -485,6 +491,11 @@ func HandleBranch(cpu *mipsevm.CpuScalars, registers *[32]Word, opcode uint32, i
 		rtv := (insn >> 16) & 0x1F
 		if rtv == 0 { // bltz
 			shouldBranch = arch.SignedInteger(rs) < 0
+		}
+		if rtv == 0x10 { // bltzal
+			shouldBranch = arch.SignedInteger(rs) < 0
+			registers[31] = cpu.PC + 8 // always set regardless of branch taken
+			linked = true
 		}
 		if rtv == 1 { // bgez
 			shouldBranch = arch.SignedInteger(rs) >= 0
@@ -530,13 +541,13 @@ func HandleHiLo(cpu *mipsevm.CpuScalars, registers *[32]Word, fun uint32, rs Wor
 		cpu.HI = SignExtend(Word(acc>>32), 32)
 		cpu.LO = SignExtend(Word(uint32(acc)), 32)
 	case 0x1a: // div
-		if rt == 0 {
+		if uint32(rt) == 0 {
 			panic("instruction divide by zero")
 		}
 		cpu.HI = SignExtend(Word(int32(rs)%int32(rt)), 32)
 		cpu.LO = SignExtend(Word(int32(rs)/int32(rt)), 32)
 	case 0x1b: // divu
-		if rt == 0 {
+		if uint32(rt) == 0 {
 			panic("instruction divide by zero")
 		}
 		cpu.HI = SignExtend(Word(uint32(rs)%uint32(rt)), 32)

@@ -345,6 +345,9 @@ type UpgradeScheduleDeployConfig struct {
 	// L2GenesisHoloceneTimeOffset is the number of seconds after genesis block that the Holocene hard fork activates.
 	// Set it to 0 to activate at genesis. Nil to disable Holocene.
 	L2GenesisHoloceneTimeOffset *hexutil.Uint64 `json:"l2GenesisHoloceneTimeOffset,omitempty"`
+	// L2GenesisIsthmusTimeOffset is the number of seconds after genesis block that the Isthmus hard fork activates.
+	// Set it to 0 to activate at genesis. Nil to disable Isthmus.
+	L2GenesisIsthmusTimeOffset *hexutil.Uint64 `json:"l2GenesisIsthmusTimeOffset,omitempty"`
 	// L2GenesisInteropTimeOffset is the number of seconds after genesis block that the Interop hard fork activates.
 	// Set it to 0 to activate at genesis. Nil to disable Interop.
 	L2GenesisInteropTimeOffset *hexutil.Uint64 `json:"l2GenesisInteropTimeOffset,omitempty"`
@@ -367,6 +370,85 @@ func offsetToUpgradeTime(offset *hexutil.Uint64, genesisTime uint64) *uint64 {
 		v = genesisTime + uint64(offset)
 	}
 	return &v
+}
+
+func (d *UpgradeScheduleDeployConfig) ForkTimeOffset(fork rollup.ForkName) *uint64 {
+	switch fork {
+	case rollup.Regolith:
+		return (*uint64)(d.L2GenesisRegolithTimeOffset)
+	case rollup.Canyon:
+		return (*uint64)(d.L2GenesisCanyonTimeOffset)
+	case rollup.Delta:
+		return (*uint64)(d.L2GenesisDeltaTimeOffset)
+	case rollup.Ecotone:
+		return (*uint64)(d.L2GenesisEcotoneTimeOffset)
+	case rollup.Fjord:
+		return (*uint64)(d.L2GenesisFjordTimeOffset)
+	case rollup.Granite:
+		return (*uint64)(d.L2GenesisGraniteTimeOffset)
+	case rollup.Holocene:
+		return (*uint64)(d.L2GenesisHoloceneTimeOffset)
+	case rollup.Isthmus:
+		return (*uint64)(d.L2GenesisIsthmusTimeOffset)
+	case rollup.Interop:
+		return (*uint64)(d.L2GenesisInteropTimeOffset)
+	default:
+		panic(fmt.Sprintf("unknown fork: %s", fork))
+	}
+}
+
+func (d *UpgradeScheduleDeployConfig) SetForkTimeOffset(fork rollup.ForkName, offset *uint64) {
+	switch fork {
+	case rollup.Regolith:
+		d.L2GenesisRegolithTimeOffset = (*hexutil.Uint64)(offset)
+	case rollup.Canyon:
+		d.L2GenesisCanyonTimeOffset = (*hexutil.Uint64)(offset)
+	case rollup.Delta:
+		d.L2GenesisDeltaTimeOffset = (*hexutil.Uint64)(offset)
+	case rollup.Ecotone:
+		d.L2GenesisEcotoneTimeOffset = (*hexutil.Uint64)(offset)
+	case rollup.Fjord:
+		d.L2GenesisFjordTimeOffset = (*hexutil.Uint64)(offset)
+	case rollup.Granite:
+		d.L2GenesisGraniteTimeOffset = (*hexutil.Uint64)(offset)
+	case rollup.Holocene:
+		d.L2GenesisHoloceneTimeOffset = (*hexutil.Uint64)(offset)
+	case rollup.Isthmus:
+		d.L2GenesisIsthmusTimeOffset = (*hexutil.Uint64)(offset)
+	case rollup.Interop:
+		d.L2GenesisInteropTimeOffset = (*hexutil.Uint64)(offset)
+	default:
+		panic(fmt.Sprintf("unknown fork: %s", fork))
+	}
+}
+
+var scheduleableForks = rollup.ForksFrom(rollup.Regolith)
+
+// ActivateForkAtOffset activates the given fork at the given offset. Previous forks are activated
+// at genesis and later forks are deactivated.
+// If multiple forks should be activated at a later time than genesis, first call
+// ActivateForkAtOffset with the earliest fork and then SetForkTimeOffset to individually set later
+// forks.
+func (d *UpgradeScheduleDeployConfig) ActivateForkAtOffset(fork rollup.ForkName, offset uint64) {
+	if !rollup.IsValidFork(fork) || fork == rollup.Bedrock {
+		panic(fmt.Sprintf("invalid fork: %s", fork))
+	}
+	ts := new(uint64)
+	for i, f := range scheduleableForks {
+		if f == fork {
+			d.SetForkTimeOffset(fork, &offset)
+			ts = nil
+		} else {
+			d.SetForkTimeOffset(scheduleableForks[i], ts)
+		}
+	}
+}
+
+// ActivateForkAtGenesis activates the given fork, and all previous forks, at genesis.
+// Later forks are deactivated.
+// See also [ActivateForkAtOffset].
+func (d *UpgradeScheduleDeployConfig) ActivateForkAtGenesis(fork rollup.ForkName) {
+	d.ActivateForkAtOffset(fork, 0)
 }
 
 func (d *UpgradeScheduleDeployConfig) RegolithTime(genesisTime uint64) *uint64 {
@@ -397,12 +479,15 @@ func (d *UpgradeScheduleDeployConfig) HoloceneTime(genesisTime uint64) *uint64 {
 	return offsetToUpgradeTime(d.L2GenesisHoloceneTimeOffset, genesisTime)
 }
 
+func (d *UpgradeScheduleDeployConfig) IsthmusTime(genesisTime uint64) *uint64 {
+	return offsetToUpgradeTime(d.L2GenesisIsthmusTimeOffset, genesisTime)
+}
+
 func (d *UpgradeScheduleDeployConfig) InteropTime(genesisTime uint64) *uint64 {
 	return offsetToUpgradeTime(d.L2GenesisInteropTimeOffset, genesisTime)
 }
 
 func (d *UpgradeScheduleDeployConfig) AllocMode(genesisTime uint64) L2AllocsMode {
-
 	forks := d.forks()
 	for i := len(forks) - 1; i >= 0; i-- {
 		if forkTime := offsetToUpgradeTime(forks[i].L2GenesisTimeOffset, genesisTime); forkTime != nil && *forkTime == 0 {
@@ -430,6 +515,7 @@ func (d *UpgradeScheduleDeployConfig) forks() []Fork {
 		{L2GenesisTimeOffset: d.L2GenesisFjordTimeOffset, Name: string(L2AllocsFjord)},
 		{L2GenesisTimeOffset: d.L2GenesisGraniteTimeOffset, Name: string(L2AllocsGranite)},
 		{L2GenesisTimeOffset: d.L2GenesisHoloceneTimeOffset, Name: string(L2AllocsHolocene)},
+		{L2GenesisTimeOffset: d.L2GenesisIsthmusTimeOffset, Name: string(L2AllocsIsthmus)},
 	}
 }
 
@@ -523,18 +609,18 @@ func (d *L2CoreDeployConfig) Check(log log.Logger) error {
 // AltDADeployConfig configures optional AltDA functionality.
 type AltDADeployConfig struct {
 	// UseAltDA is a flag that indicates if the system is using op-alt-da
-	UseAltDA bool `json:"useAltDA"`
+	UseAltDA bool `json:"useAltDA" toml:"useAltDA"`
 	// DACommitmentType specifies the allowed commitment
-	DACommitmentType string `json:"daCommitmentType"`
+	DACommitmentType string `json:"daCommitmentType" toml:"daCommitmentType"`
 	// DAChallengeWindow represents the block interval during which the availability of a data commitment can be challenged.
-	DAChallengeWindow uint64 `json:"daChallengeWindow"`
+	DAChallengeWindow uint64 `json:"daChallengeWindow" toml:"daChallengeWindow"`
 	// DAResolveWindow represents the block interval during which a data availability challenge can be resolved.
-	DAResolveWindow uint64 `json:"daResolveWindow"`
+	DAResolveWindow uint64 `json:"daResolveWindow" toml:"daResolveWindow"`
 	// DABondSize represents the required bond size to initiate a data availability challenge.
-	DABondSize uint64 `json:"daBondSize"`
+	DABondSize uint64 `json:"daBondSize" toml:"daBondSize"`
 	// DAResolverRefundPercentage represents the percentage of the resolving cost to be refunded to the resolver
 	// such as 100 means 100% refund.
-	DAResolverRefundPercentage uint64 `json:"daResolverRefundPercentage"`
+	DAResolverRefundPercentage uint64 `json:"daResolverRefundPercentage" toml:"daResolverRefundPercentage"`
 }
 
 var _ ConfigChecker = (*AltDADeployConfig)(nil)
@@ -780,12 +866,6 @@ func (d *L1DependenciesConfig) CheckAddresses(dependencyContext DependencyContex
 // The genesis generation may log warnings, do a best-effort support attempt,
 // or ignore these attributes completely.
 type LegacyDeployConfig struct {
-	// CliqueSignerAddress represents the signer address for the clique consensus engine.
-	// It is used in the multi-process devnet to sign blocks.
-	CliqueSignerAddress common.Address `json:"cliqueSignerAddress"`
-	// L1UseClique represents whether or not to use the clique consensus engine.
-	L1UseClique bool `json:"l1UseClique"`
-
 	// DeploymentWaitConfirmations is the number of confirmations to wait during
 	// deployment. This is DEPRECATED and should be removed in a future PR.
 	DeploymentWaitConfirmations int `json:"deploymentWaitConfirmations"`
@@ -940,6 +1020,7 @@ func (d *DeployConfig) RollupConfig(l1StartBlock *types.Header, l2GenesisBlockHa
 		FjordTime:               d.FjordTime(l1StartTime),
 		GraniteTime:             d.GraniteTime(l1StartTime),
 		HoloceneTime:            d.HoloceneTime(l1StartTime),
+		IsthmusTime:             d.IsthmusTime(l1StartTime),
 		InteropTime:             d.InteropTime(l1StartTime),
 		ProtocolVersionsAddress: d.ProtocolVersionsProxy,
 		AltDAConfig:             altDA,
