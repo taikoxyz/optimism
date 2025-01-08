@@ -15,7 +15,8 @@ import (
 type BlockVersion int
 
 const ( // iota is reset to 0
-	BlockV1 BlockVersion = iota
+	SoftBlockV1 BlockVersion = iota // CHANGE(taiko): add a new block version for the new topic
+	BlockV1
 	BlockV2
 	BlockV3
 )

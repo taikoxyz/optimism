@@ -204,9 +204,50 @@ type (
 )
 
 type ExecutionPayloadEnvelope struct {
-	ParentBeaconBlockRoot *common.Hash      `json:"parentBeaconBlockRoot,omitempty"`
-	ExecutionPayload      *ExecutionPayload `json:"executionPayload"`
+	ParentBeaconBlockRoot     *common.Hash      `json:"parentBeaconBlockRoot,omitempty"`
+	ExecutionPayload          *ExecutionPayload `json:"executionPayload"`
+	SoftBlockTransactionBatch *TransactionBatch `json:"transactionBatch,omitempty"`
 }
+
+// CHANGE(taiko): add soft blocks payload definition
+type SoftBlockParams struct {
+	// @param timestamp uint64 Timestamp of the soft block
+	Timestamp uint64 `json:"timestamp"`
+	// @param coinbase string Coinbase of the soft block
+	Coinbase common.Address `json:"coinbase"`
+
+	// @param anchorBlockID uint64 `_anchorBlockId` parameter of the `anchorV2` transaction in soft block
+	AnchorBlockID uint64 `json:"anchorBlockID"`
+	// @param anchorStateRoot string `_anchorStateRoot` parameter of the `anchorV2` transaction in soft block
+	AnchorStateRoot common.Hash `json:"anchorStateRoot"`
+}
+
+// CHANGE(taiko): add soft blocks transaction batch definition
+type TransactionBatch struct {
+	// @param blockId uint64 Block ID of the soft block
+	BlockID uint64 `json:"blockId"`
+	// @param batchId uint64 ID of this transaction batch
+	ID uint64 `json:"batchId"`
+	// @param transactions string zlib compressed RLP encoded bytes of a transactions list
+	TransactionsList []byte `json:"transactions"`
+	// @param batchType TransactionBatchMarker Marker of the transaction batch,
+	// @param either `end_of_block`, `end_of_preconf` or empty
+	BatchMarker TransactionBatchMarker `json:"batchType"`
+	// @param signature string Signature of this transaction batch
+	Signature string `json:"signature" rlp:"-"`
+	// @param blockParams SoftBlockParams Block parameters of the soft block
+	BlockParams *SoftBlockParams `json:"blockParams"`
+}
+
+// CHANGE(taiko): add soft blocks transaction batch marker definition
+type TransactionBatchMarker string
+
+// CHANGE(taiko): define soft blocks transaction batch marker values
+const (
+	BatchMarkerEmpty TransactionBatchMarker = ""
+	BatchMarkerEOB   TransactionBatchMarker = "endOfBlock"
+	BatchMarkerEOP   TransactionBatchMarker = "endOfPreconf"
+)
 
 type ExecutionPayload struct {
 	ParentHash    common.Hash     `json:"parentHash"`

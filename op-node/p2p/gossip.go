@@ -78,6 +78,10 @@ func blocksTopicV3(cfg *rollup.Config) string {
 	return fmt.Sprintf("/optimism/%s/2/blocks", cfg.L2ChainID.String())
 }
 
+func softBlocksTopicV1(cfg *rollup.Config) string {
+	return fmt.Sprintf("/taiko/%s/0/softblocks", cfg.L2ChainID.String())
+}
+
 // BuildSubscriptionFilter builds a simple subscription filter,
 // to help protect against peers spamming useless subscriptions.
 func BuildSubscriptionFilter(cfg *rollup.Config) pubsub.SubscriptionFilter {
@@ -248,6 +252,135 @@ func (sb *seenBlocks) markSeen(h common.Hash) {
 	sb.Lock()
 	defer sb.Unlock()
 	sb.blockHashes = append(sb.blockHashes, h)
+}
+
+// CHANGE(taiko): add softblocks topic validator
+func BuildSoftBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig, blockVersion eth.BlockVersion) pubsub.ValidatorEx {
+	// Seen block hashes per block height
+	// uint64 -> *seenBlocks
+	softblockLRU, err := lru.New[common.Hash, *seenBlocks](1000)
+	if err != nil {
+		panic(fmt.Errorf("failed to set up block height LRU cache: %w", err))
+	}
+
+	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
+		// [REJECT] if the compression is not valid
+		outLen, err := snappy.DecodedLen(message.Data)
+		if err != nil {
+			log.Warn("invalid snappy compression length data", "err", err, "peer", id)
+			return pubsub.ValidationReject
+		}
+		if outLen > maxGossipSize {
+			log.Warn("possible snappy zip bomb, decoded length is too large", "decoded_length", outLen, "peer", id)
+			return pubsub.ValidationReject
+		}
+		if outLen < minGossipSize {
+			log.Warn("rejecting undersized gossip payload")
+			return pubsub.ValidationReject
+		}
+
+		res := msgBufPool.Get().(*[]byte)
+		defer msgBufPool.Put(res)
+		data, err := snappy.Decode((*res)[:cap(*res)], message.Data)
+		if err != nil {
+			log.Warn("invalid snappy compression", "err", err, "peer", id)
+			return pubsub.ValidationReject
+		}
+		// if we ended up growing the slice capacity, fine, keep the larger one.
+		if cap(data) > cap(*res) {
+			*res = data[:cap(data)]
+		}
+
+		// message starts with compact-encoding secp256k1 encoded signature
+		signatureBytes, payloadBytes := data[:65], data[65:]
+
+		// [REJECT] if the signature by the sequencer is not valid
+		result := verifyBlockSignature(log, cfg, runCfg, id, signatureBytes, payloadBytes)
+		if result != pubsub.ValidationAccept {
+			return result
+		}
+
+		var envelope eth.ExecutionPayloadEnvelope
+		if err := envelope.UnmarshalSSZ(uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
+			log.Warn("invalid envelope payload", "err", err, "peer", id)
+			return pubsub.ValidationReject
+		}
+
+		// rounding down to seconds is fine here.
+		now := uint64(time.Now().Unix())
+
+		txBatch := envelope.SoftBlockTransactionBatch
+		// [REJECT] if the `txBatch` is null
+		if txBatch == nil {
+			log.Warn("payload has empty transaction batch", "peer", id)
+			return pubsub.ValidationReject
+		}
+		// [REJECT] if the `txBatch.TransactionsList` is null or empty
+		if txBatch.TransactionsList == nil || len(txBatch.TransactionsList) == 0 {
+			log.Warn("payload has empty transaction batch", "peer", id)
+			return pubsub.ValidationReject
+		}
+
+		// [REJECT] if the `coinbase` in the `blockParams` is empty
+		if txBatch.BlockParams.Coinbase == (common.Address{}) {
+			log.Warn("empty coinbase in block params", "peer", id)
+			return pubsub.ValidationReject
+		}
+
+		// [REJECT] if the `blockParams.timestamp` is older than 60 seconds in the past
+		if uint64(txBatch.BlockParams.Timestamp) < now-60 {
+			log.Warn("payload is too old", "timestamp", uint64(txBatch.BlockParams.Timestamp))
+			return pubsub.ValidationReject
+		}
+
+		// [REJECT] if the `blockParams.achorBlockID` is zero
+		if txBatch.BlockParams.AnchorBlockID == 0 {
+			log.Warn("payload has zero anchor block ID", "peer", id)
+			return pubsub.ValidationReject
+		}
+
+		// [REJECT] if the `blockParams.anchorStateRoot` is empty
+		if txBatch.BlockParams.AnchorStateRoot == (common.Hash{}) {
+			log.Warn("empty anchor state root in block params", "peer", id)
+			return pubsub.ValidationReject
+		}
+
+		// [REJECT] if the `blockParams.blockID` is zero
+		if txBatch.BlockID == 0 {
+			log.Warn("payload has zero block ID", "peer", id)
+			return pubsub.ValidationReject
+		}
+
+		txBatchHash := crypto.Keccak256Hash(
+			txBatch.BlockParams.Coinbase[:],
+			common.Hex2Bytes(fmt.Sprintf("%x", txBatch.BlockID)),
+			common.Hex2Bytes(fmt.Sprintf("%x", txBatch.ID)),
+		)
+
+		seen, ok := softblockLRU.Get(txBatchHash)
+		if !ok {
+			seen = new(seenBlocks)
+			softblockLRU.Add(txBatchHash, seen)
+		}
+
+		if count, hasSeen := seen.hasSeen(txBatchHash); count > 5 {
+			// [REJECT] if more than 5 same soft blocks have been seen.
+			log.Warn("seen too many same soft blocks", "coinbase", txBatch.BlockParams.Coinbase, "blockId", txBatch.BlockID, "batchId", txBatch.ID)
+			return pubsub.ValidationReject
+		} else if hasSeen {
+			// [IGNORE] if the block has already been seen
+			log.Warn("validated already seen message again")
+			return pubsub.ValidationIgnore
+		}
+
+		// mark it as seen. (note: with concurrent validation more than 5 soft blocks may be marked as seen still,
+		// but validator concurrency is limited anyway)
+		seen.markSeen(txBatchHash)
+
+		// remember the decoded payload for later usage in topic subscriber.
+		message.ValidatorData = &envelope
+		return pubsub.ValidationAccept
+	}
 }
 
 func BuildBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig, blockVersion eth.BlockVersion) pubsub.ValidatorEx {
@@ -485,6 +618,8 @@ type publisher struct {
 	blocksV1 *blockTopic
 	blocksV2 *blockTopic
 	blocksV3 *blockTopic
+	// CHANGE(taiko): add softblocks topic
+	softblocksV1 *blockTopic
 
 	runCfg GossipRuntimeConfig
 }
@@ -507,7 +642,7 @@ func combinePeers(allPeers ...[]peer.ID) []peer.ID {
 }
 
 func (p *publisher) AllBlockTopicsPeers() []peer.ID {
-	return combinePeers(p.BlocksTopicV1Peers(), p.BlocksTopicV2Peers(), p.BlocksTopicV3Peers())
+	return combinePeers(p.BlocksTopicV1Peers(), p.BlocksTopicV2Peers(), p.BlocksTopicV3Peers(), p.SoftblocksTopicV1Peers())
 }
 
 func (p *publisher) BlocksTopicV1Peers() []peer.ID {
@@ -520,6 +655,11 @@ func (p *publisher) BlocksTopicV2Peers() []peer.ID {
 
 func (p *publisher) BlocksTopicV3Peers() []peer.ID {
 	return p.blocksV3.topic.ListPeers()
+}
+
+// CHANGE(taiko): get softblocksV1 topic peers
+func (p *publisher) SoftblocksTopicV1Peers() []peer.ID {
+	return p.softblocksV1.topic.ListPeers()
 }
 
 func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.ExecutionPayloadEnvelope, signer Signer) error {
@@ -553,6 +693,11 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 	// compress the full message
 	// This also copies the data, freeing up the original buffer to go back into the pool
 	out := snappy.Encode(nil, data)
+
+	// CHANGE(taiko): publish to softblocksV1 topic if Taiko flag is enabled
+	if p.cfg.Taiko {
+		return p.softblocksV1.topic.Publish(ctx, out)
+	}
 
 	if p.cfg.IsEcotone(uint64(envelope.ExecutionPayload.Timestamp)) {
 		return p.blocksV3.topic.Publish(ctx, out)
@@ -597,14 +742,23 @@ func JoinGossip(self peer.ID, ps *pubsub.PubSub, log log.Logger, cfg *rollup.Con
 		return nil, fmt.Errorf("failed to setup blocks v3 p2p: %w", err)
 	}
 
+	softblocksV1Logger := log.New("topic", "softblocksV1")
+	softblocksV1Validator := guardGossipValidator(log, logValidationResult(self, "validated softblockv1", softblocksV1Logger, BuildSoftBlocksValidator(v3Logger, cfg, runCfg, eth.BlockV3)))
+	softblocksV1, err := newBlockTopic(p2pCtx, softBlocksTopicV1(cfg), ps, softblocksV1Logger, gossipIn, softblocksV1Validator)
+	if err != nil {
+		p2pCancel()
+		return nil, fmt.Errorf("failed to setup blocks v3 p2p: %w", err)
+	}
+
 	return &publisher{
-		log:       log,
-		cfg:       cfg,
-		p2pCancel: p2pCancel,
-		blocksV1:  blocksV1,
-		blocksV2:  blocksV2,
-		blocksV3:  blocksV3,
-		runCfg:    runCfg,
+		log:          log,
+		cfg:          cfg,
+		p2pCancel:    p2pCancel,
+		blocksV1:     blocksV1,
+		blocksV2:     blocksV2,
+		blocksV3:     blocksV3,
+		softblocksV1: softblocksV1,
+		runCfg:       runCfg,
 	}, nil
 }
 
