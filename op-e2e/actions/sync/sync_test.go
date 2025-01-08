@@ -253,7 +253,7 @@ func TestBackupUnsafe(gt *testing.T) {
 			block = block.WithBody(types.Body{Transactions: []*types.Transaction{block.Transactions()[0], invalidTx}})
 		}
 		// Add A1, B2, B3, B4, B5 into the channel
-		err = channelOut.AddBlock(sd.RollupCfg, block)
+		_, err = channelOut.AddBlock(sd.RollupCfg, block)
 		require.NoError(t, err)
 	}
 
@@ -414,7 +414,7 @@ func TestBackupUnsafeReorgForkChoiceInputError(gt *testing.T) {
 			block = block.WithBody(types.Body{Transactions: []*types.Transaction{block.Transactions()[0], invalidTx}})
 		}
 		// Add A1, B2, B3, B4, B5 into the channel
-		err = channelOut.AddBlock(sd.RollupCfg, block)
+		_, err = channelOut.AddBlock(sd.RollupCfg, block)
 		require.NoError(t, err)
 	}
 
@@ -547,7 +547,7 @@ func TestBackupUnsafeReorgForkChoiceNotInputError(gt *testing.T) {
 			block = block.WithBody(types.Body{Transactions: []*types.Transaction{block.Transactions()[0], invalidTx}})
 		}
 		// Add A1, B2, B3, B4, B5 into the channel
-		err = channelOut.AddBlock(sd.RollupCfg, block)
+		_, err = channelOut.AddBlock(sd.RollupCfg, block)
 		require.NoError(t, err)
 	}
 
@@ -618,8 +618,8 @@ func TestBackupUnsafeReorgForkChoiceNotInputError(gt *testing.T) {
 	// check pendingSafe is reset
 	require.Equal(t, sequencer.L2PendingSafe().Number, uint64(0))
 	// check backupUnsafe is applied
-	require.Equal(t, sequencer.L2Unsafe().Hash, targetUnsafeHeadHash)
-	require.Equal(t, sequencer.L2Unsafe().Number, uint64(5))
+	require.Equal(t, uint64(5), sequencer.L2Unsafe().Number)
+	require.Equal(t, targetUnsafeHeadHash, sequencer.L2Unsafe().Hash)
 	// safe head cannot be advanced because batch contained invalid blocks
 	require.Equal(t, sequencer.L2Safe().Number, uint64(0))
 }
@@ -821,7 +821,7 @@ func TestELSyncTransitionsToCLSyncAfterNodeRestart(gt *testing.T) {
 	PrepareELSyncedNode(t, miner, sequencer, seqEng, verifier, verEng, seqEngCl, batcher, dp)
 
 	// Create a new verifier which is essentially a new op-node with the sync mode of ELSync and default geth engine kind.
-	verifier = actionsHelpers.NewL2Verifier(t, captureLog, miner.L1Client(t, sd.RollupCfg), miner.BlobStore(), altda.Disabled, verifier.Eng, sd.RollupCfg, &sync.Config{SyncMode: sync.ELSync}, actionsHelpers.DefaultVerifierCfg().SafeHeadListener, nil)
+	verifier = actionsHelpers.NewL2Verifier(t, captureLog, miner.L1Client(t, sd.RollupCfg), miner.BlobStore(), altda.Disabled, verifier.Eng, sd.RollupCfg, &sync.Config{SyncMode: sync.ELSync}, actionsHelpers.DefaultVerifierCfg().SafeHeadListener)
 
 	// Build another 10 L1 blocks on the sequencer
 	for i := 0; i < 10; i++ {
@@ -863,7 +863,7 @@ func TestForcedELSyncCLAfterNodeRestart(gt *testing.T) {
 	PrepareELSyncedNode(t, miner, sequencer, seqEng, verifier, verEng, seqEngCl, batcher, dp)
 
 	// Create a new verifier which is essentially a new op-node with the sync mode of ELSync and erigon engine kind.
-	verifier2 := actionsHelpers.NewL2Verifier(t, captureLog, miner.L1Client(t, sd.RollupCfg), miner.BlobStore(), altda.Disabled, verifier.Eng, sd.RollupCfg, &sync.Config{SyncMode: sync.ELSync, SupportsPostFinalizationELSync: true}, actionsHelpers.DefaultVerifierCfg().SafeHeadListener, nil)
+	verifier2 := actionsHelpers.NewL2Verifier(t, captureLog, miner.L1Client(t, sd.RollupCfg), miner.BlobStore(), altda.Disabled, verifier.Eng, sd.RollupCfg, &sync.Config{SyncMode: sync.ELSync, SupportsPostFinalizationELSync: true}, actionsHelpers.DefaultVerifierCfg().SafeHeadListener)
 
 	// Build another 10 L1 blocks on the sequencer
 	for i := 0; i < 10; i++ {
@@ -924,7 +924,7 @@ func TestInvalidPayloadInSpanBatch(gt *testing.T) {
 			block = block.WithBody(types.Body{Transactions: []*types.Transaction{block.Transactions()[0], invalidTx}})
 		}
 		// Add A1 ~ A12 into the channel
-		err = channelOut.AddBlock(sd.RollupCfg, block)
+		_, err = channelOut.AddBlock(sd.RollupCfg, block)
 		require.NoError(t, err)
 	}
 
@@ -973,7 +973,7 @@ func TestInvalidPayloadInSpanBatch(gt *testing.T) {
 			block = block.WithBody(types.Body{Transactions: []*types.Transaction{block.Transactions()[0], tx}})
 		}
 		// Add B1, A2 ~ A12 into the channel
-		err = channelOut.AddBlock(sd.RollupCfg, block)
+		_, err = channelOut.AddBlock(sd.RollupCfg, block)
 		require.NoError(t, err)
 	}
 	// Submit span batch(B1, A2, ... A12)

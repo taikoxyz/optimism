@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"sync/atomic"
 
-	"github.com/ethereum-optimism/optimism/op-supervisor/config"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 
@@ -16,14 +14,15 @@ import (
 	opmetrics "github.com/ethereum-optimism/optimism/op-service/metrics"
 	"github.com/ethereum-optimism/optimism/op-service/oppprof"
 	oprpc "github.com/ethereum-optimism/optimism/op-service/rpc"
+	"github.com/ethereum-optimism/optimism/op-supervisor/config"
 	"github.com/ethereum-optimism/optimism/op-supervisor/metrics"
 	"github.com/ethereum-optimism/optimism/op-supervisor/supervisor/backend"
+	"github.com/ethereum-optimism/optimism/op-supervisor/supervisor/backend/db/sync"
 	"github.com/ethereum-optimism/optimism/op-supervisor/supervisor/frontend"
 )
 
 type Backend interface {
 	frontend.Backend
-	io.Closer
 }
 
 // SupervisorService implements the full-environment bells and whistles around the Supervisor.
@@ -65,6 +64,9 @@ func (su *SupervisorService) initFromCLIConfig(ctx context.Context, cfg *config.
 	}
 	if err := su.initRPCServer(cfg); err != nil {
 		return fmt.Errorf("failed to start RPC server: %w", err)
+	}
+	if err := su.initDBSync(ctx, cfg); err != nil {
+		return fmt.Errorf("failed to start DB sync server: %w", err)
 	}
 	return nil
 }
@@ -134,7 +136,7 @@ func (su *SupervisorService) initRPCServer(cfg *config.Config) error {
 		cfg.RPC.ListenPort,
 		cfg.Version,
 		oprpc.WithLogger(su.log),
-		//oprpc.WithHTTPRecorder(su.metrics), // TODO(protocol-quest#286) hook up metrics to RPC server
+		// oprpc.WithHTTPRecorder(su.metrics), // TODO(protocol-quest#286) hook up metrics to RPC server
 	)
 	if cfg.RPC.EnableAdmin {
 		su.log.Info("Admin RPC enabled")
@@ -149,7 +151,25 @@ func (su *SupervisorService) initRPCServer(cfg *config.Config) error {
 		Service:       &frontend.QueryFrontend{Supervisor: su.backend},
 		Authenticated: false,
 	})
+
 	su.rpcServer = server
+	return nil
+}
+
+func (su *SupervisorService) initDBSync(ctx context.Context, cfg *config.Config) error {
+	syncCfg := sync.Config{
+		DataDir: cfg.Datadir,
+		Logger:  su.log,
+	}
+	depSet, err := cfg.DependencySetSource.LoadDependencySet(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load dependency set: %w", err)
+	}
+	handler, err := sync.NewServer(syncCfg, depSet.Chains())
+	if err != nil {
+		return fmt.Errorf("failed to create db sync handler: %w", err)
+	}
+	su.rpcServer.AddHandler("/dbsync", handler)
 	return nil
 }
 
@@ -170,6 +190,7 @@ func (su *SupervisorService) Start(ctx context.Context) error {
 
 func (su *SupervisorService) Stop(ctx context.Context) error {
 	if !su.closing.CompareAndSwap(false, true) {
+		su.log.Warn("Supervisor is already closing")
 		return nil // already closing
 	}
 	su.log.Info("Stopping JSON-RPC server")
@@ -179,16 +200,19 @@ func (su *SupervisorService) Stop(ctx context.Context) error {
 			result = errors.Join(result, fmt.Errorf("failed to stop RPC server: %w", err))
 		}
 	}
+	su.log.Info("Stopped RPC Server")
 	if su.backend != nil {
-		if err := su.backend.Close(); err != nil {
+		if err := su.backend.Stop(ctx); err != nil {
 			result = errors.Join(result, fmt.Errorf("failed to close supervisor backend: %w", err))
 		}
 	}
+	su.log.Info("Stopped Backend")
 	if su.pprofService != nil {
 		if err := su.pprofService.Stop(ctx); err != nil {
 			result = errors.Join(result, fmt.Errorf("failed to stop PProf server: %w", err))
 		}
 	}
+	su.log.Info("Stopped PProf")
 	if su.metricsSrv != nil {
 		if err := su.metricsSrv.Stop(ctx); err != nil {
 			result = errors.Join(result, fmt.Errorf("failed to stop metrics server: %w", err))

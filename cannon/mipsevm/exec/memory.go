@@ -3,6 +3,7 @@ package exec
 import (
 	"fmt"
 
+	"github.com/ethereum-optimism/optimism/cannon/mipsevm/arch"
 	"github.com/ethereum-optimism/optimism/cannon/mipsevm/memory"
 )
 
@@ -15,9 +16,9 @@ type MemoryTrackerImpl struct {
 	lastMemAccess   Word
 	memProofEnabled bool
 	// proof of first unique memory access
-	memProof [memory.MEM_PROOF_SIZE]byte
+	memProof [memory.MemProofSize]byte
 	// proof of second unique memory access
-	memProof2 [memory.MEM_PROOF_SIZE]byte
+	memProof2 [memory.MemProofSize]byte
 }
 
 func NewMemoryTracker(memory *memory.Memory) *MemoryTrackerImpl {
@@ -37,7 +38,7 @@ func (m *MemoryTrackerImpl) TrackMemAccess(effAddr Word) {
 // TrackMemAccess2 creates a proof for a memory access following a call to TrackMemAccess
 // This is used to generate proofs for contiguous memory accesses within the same step
 func (m *MemoryTrackerImpl) TrackMemAccess2(effAddr Word) {
-	if m.memProofEnabled && m.lastMemAccess+4 != effAddr {
+	if m.memProofEnabled && m.lastMemAccess+arch.WordSizeBytes != effAddr {
 		panic(fmt.Errorf("unexpected disjointed mem access at %08x, last memory access is at %08x buffered", effAddr, m.lastMemAccess))
 	}
 	m.lastMemAccess = effAddr
@@ -49,10 +50,14 @@ func (m *MemoryTrackerImpl) Reset(enableProof bool) {
 	m.lastMemAccess = ^Word(0)
 }
 
-func (m *MemoryTrackerImpl) MemProof() [memory.MEM_PROOF_SIZE]byte {
+func (m *MemoryTrackerImpl) MemProof() [memory.MemProofSize]byte {
 	return m.memProof
 }
 
-func (m *MemoryTrackerImpl) MemProof2() [memory.MEM_PROOF_SIZE]byte {
+func (m *MemoryTrackerImpl) MemProof2() [memory.MemProofSize]byte {
 	return m.memProof2
 }
+
+type NoopMemoryTracker struct{}
+
+func (n *NoopMemoryTracker) TrackMemAccess(Word) {}

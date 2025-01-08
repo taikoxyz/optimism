@@ -16,6 +16,7 @@ import (
 
 // Note: 2**12 = 4 KiB, the min phys page size in the Go runtime.
 const (
+	WordSize          = arch.WordSize
 	PageAddrSize      = arch.PageAddrSize
 	PageKeySize       = arch.PageKeySize
 	PageSize          = 1 << PageAddrSize
@@ -23,9 +24,8 @@ const (
 	MaxPageCount      = 1 << PageKeySize
 	PageKeyMask       = MaxPageCount - 1
 	MemProofLeafCount = arch.MemProofLeafCount
+	MemProofSize      = arch.MemProofSize
 )
-
-const MEM_PROOF_SIZE = arch.MemProofSize
 
 type Word = arch.Word
 
@@ -98,8 +98,9 @@ func (m *Memory) invalidate(addr Word) {
 		return
 	}
 
-	// find the gindex of the first page covering the address
-	gindex := ((uint64(1) << 32) | uint64(addr)) >> PageAddrSize
+	// find the gindex of the first page covering the address: i.e. ((1 << WordSize) | addr) >> PageAddrSize
+	// Avoid 64-bit overflow by distributing the right shift across the OR.
+	gindex := (uint64(1) << (WordSize - PageAddrSize)) | uint64(addr>>PageAddrSize)
 
 	for gindex > 0 {
 		m.nodes[gindex] = nil
@@ -137,7 +138,7 @@ func (m *Memory) MerkleizeSubtree(gindex uint64) [32]byte {
 	return r
 }
 
-func (m *Memory) MerkleProof(addr Word) (out [MEM_PROOF_SIZE]byte) {
+func (m *Memory) MerkleProof(addr Word) (out [MemProofSize]byte) {
 	proof := m.traverseBranch(1, addr, 0)
 	// encode the proof
 	for i := 0; i < MemProofLeafCount; i++ {
@@ -147,17 +148,17 @@ func (m *Memory) MerkleProof(addr Word) (out [MEM_PROOF_SIZE]byte) {
 }
 
 func (m *Memory) traverseBranch(parent uint64, addr Word, depth uint8) (proof [][32]byte) {
-	if depth == 32-5 {
-		proof = make([][32]byte, 0, 32-5+1)
+	if depth == WordSize-5 {
+		proof = make([][32]byte, 0, WordSize-5+1)
 		proof = append(proof, m.MerkleizeSubtree(parent))
 		return
 	}
-	if depth > 32-5 {
+	if depth > WordSize-5 {
 		panic("traversed too deep")
 	}
 	self := parent << 1
 	sibling := self | 1
-	if addr&(1<<(31-depth)) != 0 {
+	if addr&(1<<((WordSize-1)-depth)) != 0 {
 		self, sibling = sibling, self
 	}
 	proof = m.traverseBranch(self, addr, depth+1)
@@ -191,25 +192,6 @@ func (m *Memory) pageLookup(pageIndex Word) (*CachedPage, bool) {
 	return p, ok
 }
 
-func (m *Memory) SetMemory(addr Word, v uint32) {
-	// addr must be aligned to 4 bytes
-	if addr&arch.ExtMask != 0 {
-		panic(fmt.Errorf("unaligned memory access: %x", addr))
-	}
-
-	pageIndex := addr >> PageAddrSize
-	pageAddr := addr & PageAddrMask
-	p, ok := m.pageLookup(pageIndex)
-	if !ok {
-		// allocate the page if we have not already.
-		// Go may mmap relatively large ranges, but we only allocate the pages just in time.
-		p = m.AllocPage(pageIndex)
-	} else {
-		m.invalidate(addr) // invalidate this branch of memory, now that the value changed
-	}
-	binary.BigEndian.PutUint32(p.Data[pageAddr:pageAddr+4], v)
-}
-
 // SetWord stores [arch.Word] sized values at the specified address
 func (m *Memory) SetWord(addr Word, v Word) {
 	// addr must be aligned to WordSizeBytes bytes
@@ -230,22 +212,8 @@ func (m *Memory) SetWord(addr Word, v Word) {
 	arch.ByteOrderWord.PutWord(p.Data[pageAddr:pageAddr+arch.WordSizeBytes], v)
 }
 
-// GetMemory reads the 32-bit value located at the specified address.
-func (m *Memory) GetMemory(addr Word) uint32 {
-	// addr must be aligned to 4 bytes
-	if addr&arch.ExtMask != 0 {
-		panic(fmt.Errorf("unaligned memory access: %x", addr))
-	}
-	p, ok := m.pageLookup(addr >> PageAddrSize)
-	if !ok {
-		return 0
-	}
-	pageAddr := addr & PageAddrMask
-	return binary.BigEndian.Uint32(p.Data[pageAddr : pageAddr+4])
-}
-
 // GetWord reads the maximum sized value, [arch.Word], located at the specified address.
-// Note: Also known by the MIPS64 specification as a "double-word" memory access.
+// Note: Also referred to by the MIPS64 specification as a "double-word" memory access.
 func (m *Memory) GetWord(addr Word) Word {
 	// addr must be word aligned
 	if addr&arch.ExtMask != 0 {
@@ -312,18 +280,22 @@ func (m *Memory) SetMemoryRange(addr Word, r io.Reader) error {
 	for {
 		pageIndex := addr >> PageAddrSize
 		pageAddr := addr & PageAddrMask
-		p, ok := m.pageLookup(pageIndex)
-		if !ok {
-			p = m.AllocPage(pageIndex)
-		}
-		p.InvalidateFull()
-		n, err := r.Read(p.Data[pageAddr:])
+		readLen := PageSize - pageAddr
+		chunk := make([]byte, readLen)
+		n, err := r.Read(chunk)
 		if err != nil {
 			if err == io.EOF {
 				return nil
 			}
 			return err
 		}
+
+		p, ok := m.pageLookup(pageIndex)
+		if !ok {
+			p = m.AllocPage(pageIndex)
+		}
+		p.InvalidateFull()
+		copy(p.Data[pageAddr:], chunk[:n])
 		addr += Word(n)
 	}
 }

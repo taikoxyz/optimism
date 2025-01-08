@@ -13,16 +13,8 @@ type (
 )
 
 const (
-	IsMips32      = true
-	WordSize      = 32
-	WordSizeBytes = WordSize >> 3
-	PageAddrSize  = 12
-	PageKeySize   = WordSize - PageAddrSize
-
-	MemProofLeafCount = 28
-	MemProofSize      = MemProofLeafCount * 32
-
 	AddressMask = 0xFFffFFfc
+	WordSize    = 32
 	ExtMask     = 0x3
 
 	HeapStart       = 0x05_00_00_00
@@ -61,6 +53,7 @@ const (
 	SysPrlimit64     = 4338
 	SysClose         = 4006
 	SysPread64       = 4200
+	SysStat          = 4106
 	SysFstat         = 4108
 	SysFstat64       = 4215
 	SysOpenAt        = 4288
@@ -79,6 +72,8 @@ const (
 	SysLlseek        = 4140
 	SysMinCore       = 4217
 	SysTgkill        = 4266
+	SysGetRLimit     = 4076
+	SysLseek         = 4019
 	// Profiling-related syscalls
 	SysSetITimer    = 4104
 	SysTimerCreate  = 4257

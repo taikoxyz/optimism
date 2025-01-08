@@ -363,26 +363,32 @@ func (m *SimpleTxManager) craftTx(ctx context.Context, candidate TxCandidate) (*
 		}
 	}
 
+	// Calculate the intrinsic gas for the transaction
+	callMsg := ethereum.CallMsg{
+		From:      m.cfg.From,
+		To:        candidate.To,
+		GasTipCap: gasTipCap,
+		GasFeeCap: gasFeeCap,
+		Data:      candidate.TxData,
+		Value:     candidate.Value,
+	}
+	if len(blobHashes) > 0 {
+		callMsg.BlobGasFeeCap = blobBaseFee
+		callMsg.BlobHashes = blobHashes
+	}
 	// If the gas limit is set, we can use that as the gas
 	if gasLimit == 0 {
-		// Calculate the intrinsic gas for the transaction
-		callMsg := ethereum.CallMsg{
-			From:      m.cfg.From,
-			To:        candidate.To,
-			GasTipCap: gasTipCap,
-			GasFeeCap: gasFeeCap,
-			Data:      candidate.TxData,
-			Value:     candidate.Value,
-		}
-		if len(blobHashes) > 0 {
-			callMsg.BlobGasFeeCap = blobBaseFee
-			callMsg.BlobHashes = blobHashes
-		}
 		gas, err := m.backend.EstimateGas(ctx, callMsg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to estimate gas: %w", errutil.TryAddRevertReason(err))
 		}
 		gasLimit = gas
+	} else {
+		callMsg.Gas = gasLimit
+		_, err := m.backend.CallContract(ctx, callMsg, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to call: %w", errutil.TryAddRevertReason(err))
+		}
 	}
 
 	var txMessage types.TxData
@@ -600,7 +606,7 @@ func (m *SimpleTxManager) sendTx(ctx context.Context, tx *types.Transaction) (*t
 func (m *SimpleTxManager) publishTx(ctx context.Context, tx *types.Transaction, sendState *SendState) (*types.Transaction, bool) {
 	l := m.txLogger(tx, true)
 
-	l.Info("Publishing transaction", "tx", tx.Hash())
+	l.Info("Publishing transaction")
 
 	for {
 		if sendState.bumpFees {
@@ -796,7 +802,8 @@ func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transa
 		return nil, err
 	}
 
-	callArgs := ethereum.CallMsg{
+	// Re-estimate gaslimit in case things have changed or a previous gaslimit estimate was wrong
+	callMsg := ethereum.CallMsg{
 		From:      m.cfg.From,
 		To:        tx.To(),
 		GasTipCap: bumpedTip,
@@ -804,13 +811,22 @@ func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transa
 		Data:      tx.Data(),
 		Value:     tx.Value(),
 	}
-
+	var bumpedBlobFee *big.Int
 	if tx.Type() == types.BlobTxType {
-		callArgs.BlobHashes = append(callArgs.BlobHashes, tx.BlobHashes()...)
-	}
+		// Blob transactions have an additional blob gas price we must specify, so we must make sure it is
+		// getting bumped appropriately.
+		bumpedBlobFee = calcThresholdValue(tx.BlobGasFeeCap(), true)
+		if bumpedBlobFee.Cmp(blobBaseFee) < 0 {
+			bumpedBlobFee = blobBaseFee
+		}
+		if err := m.checkBlobFeeLimits(blobBaseFee, bumpedBlobFee); err != nil {
+			return nil, err
+		}
 
-	// Re-estimate gaslimit in case things have changed or a previous gaslimit estimate was wrong
-	gas, err := m.backend.EstimateGas(ctx, callArgs)
+		callMsg.BlobGasFeeCap = bumpedBlobFee
+		callMsg.BlobHashes = tx.BlobHashes()
+	}
+	gas, err := m.backend.EstimateGas(ctx, callMsg)
 	if err != nil {
 		// If this is a transaction resubmission, we sometimes see this outcome because the
 		// original tx can get included in a block just before the above call. In this case the
@@ -818,8 +834,6 @@ func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transa
 		// expected block number"
 		m.l.Warn("failed to re-estimate gas", "err", err, "tx", tx.Hash(), "gaslimit", tx.Gas(),
 			"gasFeeCap", bumpedFee, "gasTipCap", bumpedTip)
-		// CHANGE(taiko): If we can't estimate gas (mainly for blob transactions),
-		// we should just use the gas limit from the original transaction.
 		return nil, err
 	}
 	if tx.Gas() != gas {
@@ -838,15 +852,6 @@ func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transa
 
 	var newTx *types.Transaction
 	if tx.Type() == types.BlobTxType {
-		// Blob transactions have an additional blob gas price we must specify, so we must make sure it is
-		// getting bumped appropriately.
-		bumpedBlobFee := calcThresholdValue(tx.BlobGasFeeCap(), true)
-		if bumpedBlobFee.Cmp(blobBaseFee) < 0 {
-			bumpedBlobFee = blobBaseFee
-		}
-		if err := m.checkBlobFeeLimits(blobBaseFee, bumpedBlobFee); err != nil {
-			return nil, err
-		}
 		message := &types.BlobTx{
 			Nonce:      tx.Nonce(),
 			To:         *tx.To(),
@@ -898,6 +903,10 @@ func (m *SimpleTxManager) SuggestGasPriceCaps(ctx context.Context) (*big.Int, *b
 		m.metr.RPCError()
 		return nil, nil, nil, fmt.Errorf("failed to get gas price estimates: %w", err)
 	}
+
+	m.metr.RecordTipCap(tip)
+	m.metr.RecordBaseFee(baseFee)
+	m.metr.RecordBlobBaseFee(blobFee)
 
 	// Enforce minimum base fee and tip cap
 	minTipCap := m.cfg.MinTipCap.Load()

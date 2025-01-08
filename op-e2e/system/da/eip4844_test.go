@@ -57,7 +57,6 @@ func testSystem4844E2E(t *testing.T, multiBlob bool, daType batcherFlags.DataAva
 	cfg.BatcherBatchType = derive.SpanBatchType
 	cfg.DeployConfig.L1GenesisBlockBaseFeePerGas = (*hexutil.Big)(big.NewInt(7000))
 
-	const maxBlobs = eth.MaxBlobsPerBlobTx
 	var maxL1TxSize int
 	if multiBlob {
 		cfg.BatcherTargetNumFrames = eth.MaxBlobsPerBlobTx
@@ -93,6 +92,7 @@ func testSystem4844E2E(t *testing.T, multiBlob bool, daType batcherFlags.DataAva
 		}
 	}()
 
+	cfg.DisableProposer = true // disable L2 output submission for this test
 	sys, err := cfg.Start(t, action)
 	require.NoError(t, err, "Error starting up system")
 
@@ -120,7 +120,7 @@ func testSystem4844E2E(t *testing.T, multiBlob bool, daType batcherFlags.DataAva
 	require.NoError(t, err)
 	mintAmount := big.NewInt(1_000_000_000_000)
 	opts.Value = mintAmount
-	helpers.SendDepositTx(t, cfg, l1Client, l2Verif, opts, func(l2Opts *helpers.DepositTxOpts) {})
+	helpers.SendDepositTx(t, cfg, l1Client, l2Verif, opts, nil)
 
 	// Confirm balance
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 20*time.Second)
@@ -214,7 +214,8 @@ func testSystem4844E2E(t *testing.T, multiBlob bool, daType batcherFlags.DataAva
 	if !multiBlob {
 		require.NotZero(t, numBlobs, "single-blob: expected to find L1 blob tx")
 	} else {
-		require.Equal(t, maxBlobs, numBlobs, fmt.Sprintf("multi-blob: expected to find L1 blob tx with %d blobs", eth.MaxBlobsPerBlobTx))
+		const maxBlobs = eth.MaxBlobsPerBlobTx
+		require.Equal(t, maxBlobs, numBlobs, fmt.Sprintf("multi-blob: expected to find L1 blob tx with %d blobs", maxBlobs))
 		// blob tx should have filled up all but last blob
 		bcl := sys.L1BeaconHTTPClient()
 		hashes := toIndexedBlobHashes(blobTx.BlobHashes()...)

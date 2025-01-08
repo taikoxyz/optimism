@@ -2,7 +2,6 @@
 pragma solidity ^0.8.0;
 
 import { console2 as console } from "forge-std/console2.sol";
-import { stdJson } from "forge-std/StdJson.sol";
 
 import { GnosisSafe as Safe } from "safe-contracts/GnosisSafe.sol";
 import { GnosisSafeProxyFactory as SafeProxyFactory } from "safe-contracts/proxies/GnosisSafeProxyFactory.sol";
@@ -11,12 +10,12 @@ import { ModuleManager } from "safe-contracts/base/ModuleManager.sol";
 import { GuardManager } from "safe-contracts/base/GuardManager.sol";
 import { Enum as SafeOps } from "safe-contracts/common/Enum.sol";
 
-import { Deployer } from "scripts/deploy/Deployer.sol";
+import { DeployUtils } from "scripts/libraries/DeployUtils.sol";
 
 import { LivenessGuard } from "src/safe/LivenessGuard.sol";
 import { LivenessModule } from "src/safe/LivenessModule.sol";
 import { DeputyGuardianModule } from "src/safe/DeputyGuardianModule.sol";
-import { ISuperchainConfig } from "src/L1/interfaces/ISuperchainConfig.sol";
+import { ISuperchainConfig } from "interfaces/L1/ISuperchainConfig.sol";
 
 import { Deploy } from "./Deploy.s.sol";
 
@@ -59,7 +58,7 @@ struct GuardianConfig {
 ///         be used as an example to guide the setup and configuration of the Safe contracts.
 contract DeployOwnership is Deploy {
     /// @notice Internal function containing the deploy logic.
-    function _run() internal override {
+    function _run(bool) internal override {
         console.log("start of Ownership Deployment");
         // The SuperchainConfig is needed as a constructor argument to the Deputy Guardian Module
         deploySuperchainConfig();
@@ -91,7 +90,7 @@ contract DeployOwnership is Deploy {
             safeConfig: SafeConfig({ threshold: 1, owners: exampleGuardianOwners }),
             deputyGuardianModuleConfig: DeputyGuardianModuleConfig({
                 deputyGuardian: mustGetAddress("FoundationOperationsSafe"),
-                superchainConfig: ISuperchainConfig(mustGetAddress("SuperchainConfig"))
+                superchainConfig: ISuperchainConfig(mustGetAddress("SuperchainConfigImpl"))
             })
         });
     }
@@ -145,7 +144,7 @@ contract DeployOwnership is Deploy {
     /// @param _name The name of the Safe to deploy.
     /// @param _owners The owners of the Safe.
     /// @param _threshold The threshold of the Safe.
-    /// @param _keepDeployer Wether or not the deployer address will be added as an owner of the Safe.
+    /// @param _keepDeployer Whether or not the deployer address will be added as an owner of the Safe.
     function deploySafe(
         string memory _name,
         address[] memory _owners,
@@ -317,6 +316,23 @@ contract DeployOwnership is Deploy {
         console.log("Deployed and configured the Guardian Safe!");
     }
 
+    /// @notice Deploy the SuperchainConfig contract
+    function deploySuperchainConfig() public broadcast {
+        ISuperchainConfig superchainConfig = ISuperchainConfig(
+            DeployUtils.create2AndSave({
+                _save: this,
+                _salt: _implSalt(),
+                _name: "SuperchainConfig",
+                _nick: "SuperchainConfigImpl",
+                _args: DeployUtils.encodeConstructor(abi.encodeCall(ISuperchainConfig.__constructor__, ()))
+            })
+        );
+
+        require(superchainConfig.guardian() == address(0), "SuperchainConfig: guardian must be address(0)");
+        bytes32 initialized = vm.load(address(superchainConfig), bytes32(0));
+        require(initialized != 0, "SuperchainConfig: must be initialized");
+    }
+
     /// @notice Configure the Guardian Safe with the DeputyGuardianModule.
     function configureGuardianSafe() public broadcast returns (address addr_) {
         addr_ = mustGetAddress("GuardianSafe");
@@ -357,7 +373,7 @@ contract DeployOwnership is Deploy {
         address[] memory owners = safe.getOwners();
         require(
             safe.getThreshold() == LivenessModule(livenessModule).getRequiredThreshold(owners.length),
-            "Safe threshold must be equal to the LivenessModule's required threshold"
+            "DeployOwnership: safe threshold must be equal to the LivenessModule's required threshold"
         );
 
         addr_ = address(safe);
