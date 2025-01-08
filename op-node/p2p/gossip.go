@@ -61,6 +61,11 @@ type GossipRuntimeConfig interface {
 	P2PSequencerAddress() common.Address
 }
 
+// CHANGE(taiko): add softblocks grossip validator
+type SoftblockGossipRuntimeConfig interface {
+	VerifySignature(signatureBytes []byte, payloadBytes []byte) (pubsub.ValidationResult, error)
+}
+
 //go:generate mockery --name GossipMetricer
 type GossipMetricer interface {
 	RecordGossipEvent(evType int32)
@@ -295,7 +300,16 @@ func BuildSoftBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg GossipR
 		signatureBytes, payloadBytes := data[:65], data[65:]
 
 		// [REJECT] if the signature by the sequencer is not valid
-		result := verifyBlockSignature(log, cfg, runCfg, id, signatureBytes, payloadBytes)
+		softBlockRunCfg, ok := runCfg.(SoftblockGossipRuntimeConfig)
+		if !ok {
+			log.Error("Runtime config does not implement SoftblockGossipRuntimeConfig", "peer", id)
+			return pubsub.ValidationIgnore
+		}
+		result, err := softBlockRunCfg.VerifySignature(signatureBytes, payloadBytes)
+		if err != nil {
+			log.Error("Failed to verifying signature", "err", err, "peer", id)
+			return pubsub.ValidationIgnore
+		}
 		if result != pubsub.ValidationAccept {
 			return result
 		}
@@ -316,7 +330,7 @@ func BuildSoftBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg GossipR
 			return pubsub.ValidationReject
 		}
 		// [REJECT] if the `txBatch.TransactionsList` is null or empty
-		if txBatch.TransactionsList == nil || len(txBatch.TransactionsList) == 0 {
+		if len(txBatch.TransactionsList) == 0 {
 			log.Warn("payload has empty transaction batch", "peer", id)
 			return pubsub.ValidationReject
 		}
