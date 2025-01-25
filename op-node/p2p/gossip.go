@@ -297,7 +297,7 @@ func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg Goss
 
 		// [REJECT] if the signature by the sequencer is not valid
 		result := verifyBlockSignature(log, cfg, runCfg, id, signatureBytes, payloadBytes)
-		if result != pubsub.ValidationAccept {
+		if result == pubsub.ValidationReject {
 			return result
 		}
 
