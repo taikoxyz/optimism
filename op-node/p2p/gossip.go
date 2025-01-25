@@ -255,7 +255,7 @@ func (sb *seenBlocks) markSeen(h common.Hash) {
 	sb.blockHashes = append(sb.blockHashes, h)
 }
 
-// CHANGE(taiko): add softblocks topic validator
+// CHANGE(taiko): add preconfBlocks topic validator
 func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig, blockVersion eth.BlockVersion) pubsub.ValidatorEx {
 	// Seen block hashes per block height
 	// uint64 -> *seenBlocks
@@ -368,7 +368,7 @@ func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg Goss
 			return pubsub.ValidationIgnore
 		}
 
-		// mark it as seen. (note: with concurrent validation more than 5 soft blocks may be marked as seen still,
+		// mark it as seen. (note: with concurrent validation more than 5 preconf blocks may be marked as seen still,
 		// but validator concurrency is limited anyway)
 		seen.markSeen(payload.BlockHash)
 
@@ -689,7 +689,7 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 	// This also copies the data, freeing up the original buffer to go back into the pool
 	out := snappy.Encode(nil, data)
 
-	// CHANGE(taiko): publish to softblocksV1 topic if Taiko flag is enabled
+	// CHANGE(taiko): publish to preconfBlocksV1 topic if Taiko flag is enabled
 	if p.cfg.Taiko {
 		return p.preconfBlocksV1.topic.Publish(ctx, out)
 	}
