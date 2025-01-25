@@ -50,6 +50,7 @@ func PayloadToBlockRef(rollupCfg *rollup.Config, payload *eth.ExecutionPayload) 
 	}, nil
 }
 
+// CHANGE(taiko): changes for taiko-geth compatibility.
 func PayloadToSystemConfig(rollupCfg *rollup.Config, payload *eth.ExecutionPayload) (eth.SystemConfig, error) {
 	return eth.SystemConfig{}, nil
 }

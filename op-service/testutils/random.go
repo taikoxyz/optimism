@@ -298,7 +298,7 @@ func RandomBlockPrependTxsWithTime(rng *rand.Rand, txCount int, t uint64, ptxs .
 	}
 	header.GasUsed = cumulativeGasUsed
 	header.GasLimit = cumulativeGasUsed + uint64(rng.Int63n(int64(cumulativeGasUsed)))
-	block := &types.Block{}
+	block := &types.Block{} // CHANGE(taiko): changes for taiko-geth compatibility.
 	logIndex := uint(0)
 	for i, r := range receipts {
 		r.BlockHash = block.Hash()

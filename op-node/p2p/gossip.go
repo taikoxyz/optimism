@@ -78,6 +78,7 @@ func blocksTopicV3(cfg *rollup.Config) string {
 	return fmt.Sprintf("/optimism/%s/2/blocks", cfg.L2ChainID.String())
 }
 
+// CHANGE(taiko): create preconf blocks topic.
 func preconfBlocksTopicV1(cfg *rollup.Config) string {
 	return fmt.Sprintf("/taiko/%s/0/preconfBlocks", cfg.L2ChainID.String())
 }
@@ -635,6 +636,7 @@ func combinePeers(allPeers ...[]peer.ID) []peer.ID {
 }
 
 func (p *publisher) AllBlockTopicsPeers() []peer.ID {
+	// CHANGE(taiko): combine preconf blocks topic peers.
 	return combinePeers(p.BlocksTopicV1Peers(), p.BlocksTopicV2Peers(), p.BlocksTopicV3Peers(), p.PreconfBlocksTopicV1Peers())
 }
 
@@ -735,6 +737,7 @@ func JoinGossip(self peer.ID, ps *pubsub.PubSub, log log.Logger, cfg *rollup.Con
 		return nil, fmt.Errorf("failed to setup blocks v3 p2p: %w", err)
 	}
 
+	// CHANGE(taiko): setup preconf blocks topic.
 	preconfBlocksV1Logger := log.New("topic", "preconfBlocksV1")
 	preconfBlocksV1Validator := guardGossipValidator(log, logValidationResult(self, "validated preconfBlockv1", preconfBlocksV1Logger, BuildPreconfBlocksValidator(v3Logger, cfg, runCfg, eth.BlockV3)))
 	preconfBlocksV1, err := newBlockTopic(p2pCtx, preconfBlocksTopicV1(cfg), ps, preconfBlocksV1Logger, gossipIn, preconfBlocksV1Validator)

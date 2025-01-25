@@ -152,6 +152,7 @@ func (s *EngineAPIClient) GetPayload(ctx context.Context, payloadInfo eth.Payloa
 
 func (s *EngineAPIClient) SignalSuperchainV1(ctx context.Context, recommended, required params.ProtocolVersion) (params.ProtocolVersion, error) {
 	var result params.ProtocolVersion
+	// CHANGE(taiko): changes for taiko-geth compatibility.
 	err := s.RPC.CallContext(ctx, &result, "engine_signalSuperchainV1", nil)
 	return result, err
 }
