@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/eth/catalyst"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 
@@ -153,9 +152,7 @@ func (s *EngineAPIClient) GetPayload(ctx context.Context, payloadInfo eth.Payloa
 
 func (s *EngineAPIClient) SignalSuperchainV1(ctx context.Context, recommended, required params.ProtocolVersion) (params.ProtocolVersion, error) {
 	var result params.ProtocolVersion
-	err := s.RPC.CallContext(ctx, &result, "engine_signalSuperchainV1", &catalyst.SuperchainSignal{
-		Recommended: recommended,
-		Required:    required,
-	})
+	// CHANGE(taiko): changes for taiko-geth compatibility.
+	err := s.RPC.CallContext(ctx, &result, "engine_signalSuperchainV1", nil)
 	return result, err
 }
