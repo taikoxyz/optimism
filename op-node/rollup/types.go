@@ -143,6 +143,9 @@ type Config struct {
 
 	// AltDAConfig. We are in the process of migrating to the AltDAConfig from these legacy top level values
 	AltDAConfig *AltDAConfig `json:"alt_da,omitempty"`
+
+	// CHANGE(taiko): Add Taiko flag to the config
+	Taiko bool `json:"taiko,omitempty"`
 }
 
 // ValidateL1Config checks L1 config variables for errors.

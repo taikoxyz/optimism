@@ -206,6 +206,18 @@ type (
 type ExecutionPayloadEnvelope struct {
 	ParentBeaconBlockRoot *common.Hash      `json:"parentBeaconBlockRoot,omitempty"`
 	ExecutionPayload      *ExecutionPayload `json:"executionPayload"`
+	// CHANGE(taiko): Add the following fields to the ExecutionPayloadEnvelope for
+	// building Taiko blocks.
+	AnchorBlockID   uint64      `json:"anchorBlockID"`
+	AnchorStateRoot common.Hash `json:"anchorStateRoot"`
+	AnchorInput     [32]byte    `json:"anchorInput"`
+	SignalSlots     [][32]byte  `json:"signalSlots"`
+	// L2 Base fee configs
+	AdjustmentQuotient     uint8  `json:"adjustmentQuotient"`
+	SharingPctg            uint8  `json:"sharingPctg"`
+	GasIssuancePerSecond   uint32 `json:"gasIssuancePerSecond"`
+	MinGasExcess           uint64 `json:"minGasExcess"`
+	MaxGasIssuancePerBlock uint32 `json:"maxGasIssuancePerBlock"`
 }
 
 type ExecutionPayload struct {
