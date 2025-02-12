@@ -301,16 +301,19 @@ func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg Goss
 			return result
 		}
 
-		var envelope eth.ExecutionPayloadEnvelope
-		if err := envelope.UnmarshalSSZ(uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
+		var pl eth.ExecutionPayload
+		if err := pl.UnmarshalSSZ(blockVersion, uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
 			log.Warn("invalid envelope payload", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
 
+		envelope := eth.ExecutionPayloadEnvelope{ExecutionPayload: &pl}
+
+		payload := envelope.ExecutionPayload
+
 		// rounding down to seconds is fine here.
 		now := uint64(time.Now().Unix())
 
-		payload := envelope.ExecutionPayload
 		// [REJECT] if the `payload` is null
 		if payload == nil {
 			log.Warn("payload is empty", "peer", id)
