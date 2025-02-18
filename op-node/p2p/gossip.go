@@ -742,7 +742,7 @@ func JoinGossip(self peer.ID, ps *pubsub.PubSub, log log.Logger, cfg *rollup.Con
 
 	// CHANGE(taiko): setup preconf blocks topic.
 	preconfBlocksV1Logger := log.New("topic", "preconfBlocksV1")
-	preconfBlocksV1Validator := guardGossipValidator(log, logValidationResult(self, "validated preconfBlockv1", preconfBlocksV1Logger, BuildPreconfBlocksValidator(v3Logger, cfg, runCfg, eth.BlockV3)))
+	preconfBlocksV1Validator := guardGossipValidator(preconfBlocksV1Logger, logValidationResult(self, "validated preconfBlockv1", preconfBlocksV1Logger, BuildPreconfBlocksValidator(preconfBlocksV1Logger, cfg, runCfg, eth.BlockV1)))
 	preconfBlocksV1, err := newBlockTopic(p2pCtx, preconfBlocksTopicV1(cfg), ps, preconfBlocksV1Logger, gossipIn, preconfBlocksV1Validator)
 	if err != nil {
 		p2pCancel()
