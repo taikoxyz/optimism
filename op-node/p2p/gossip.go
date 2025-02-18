@@ -311,9 +311,6 @@ func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg Goss
 
 		payload := envelope.ExecutionPayload
 
-		// rounding down to seconds is fine here.
-		now := uint64(time.Now().Unix())
-
 		// [REJECT] if the `payload` is null
 		if payload == nil {
 			log.Warn("payload is empty", "peer", id)
