@@ -337,18 +337,6 @@ func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg Goss
 			return pubsub.ValidationReject
 		}
 
-		// [REJECT] if the `envelope.achorBlockID` is zero
-		if envelope.AnchorBlockID == 0 {
-			log.Warn("envelope has zero anchor block ID", "peer", id)
-			return pubsub.ValidationReject
-		}
-
-		// [REJECT] if the `envelope.anchorStateRoot` is empty
-		if envelope.AnchorStateRoot == (common.Hash{}) {
-			log.Warn("empty anchor state root in envelope", "peer", id)
-			return pubsub.ValidationReject
-		}
-
 		// [REJECT] if the `blockParams.blockID` is zero
 		if payload.BlockNumber == 0 {
 			log.Warn("payload has zero block ID", "peer", id)
