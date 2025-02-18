@@ -331,12 +331,6 @@ func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg Goss
 			return pubsub.ValidationReject
 		}
 
-		// [REJECT] if the `blockParams.timestamp` is older than 60 seconds in the past
-		if uint64(payload.Timestamp) < now-60 {
-			log.Warn("payload is too old", "timestamp", uint64(payload.Timestamp))
-			return pubsub.ValidationReject
-		}
-
 		// [REJECT] if the `blockParams.blockID` is zero
 		if payload.BlockNumber == 0 {
 			log.Warn("payload has zero block ID", "peer", id)
