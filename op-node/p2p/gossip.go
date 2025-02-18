@@ -649,7 +649,7 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 
 	buf.Write(make([]byte, 65))
 
-	if envelope.ParentBeaconBlockRoot != nil {
+	if envelope.ParentBeaconBlockRoot != nil || p.cfg.Taiko {
 		if _, err := envelope.MarshalSSZ(buf); err != nil {
 			return fmt.Errorf("failed to encoded execution payload envelope to publish: %w", err)
 		}
