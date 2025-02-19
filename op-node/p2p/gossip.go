@@ -311,9 +311,6 @@ func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg Goss
 
 		payload := envelope.ExecutionPayload
 
-		// rounding down to seconds is fine here.
-		now := uint64(time.Now().Unix())
-
 		// [REJECT] if the `payload` is null
 		if payload == nil {
 			log.Warn("payload is empty", "peer", id)
@@ -328,24 +325,6 @@ func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg Goss
 		// [REJECT] if the `coinbase` in the `payload` is empty
 		if payload.FeeRecipient == (common.Address{}) {
 			log.Warn("empty coinbase in payload", "peer", id)
-			return pubsub.ValidationReject
-		}
-
-		// [REJECT] if the `blockParams.timestamp` is older than 60 seconds in the past
-		if uint64(payload.Timestamp) < now-60 {
-			log.Warn("payload is too old", "timestamp", uint64(payload.Timestamp))
-			return pubsub.ValidationReject
-		}
-
-		// [REJECT] if the `envelope.achorBlockID` is zero
-		if envelope.AnchorBlockID == 0 {
-			log.Warn("envelope has zero anchor block ID", "peer", id)
-			return pubsub.ValidationReject
-		}
-
-		// [REJECT] if the `envelope.anchorStateRoot` is empty
-		if envelope.AnchorStateRoot == (common.Hash{}) {
-			log.Warn("empty anchor state root in envelope", "peer", id)
 			return pubsub.ValidationReject
 		}
 
@@ -742,7 +721,7 @@ func JoinGossip(self peer.ID, ps *pubsub.PubSub, log log.Logger, cfg *rollup.Con
 
 	// CHANGE(taiko): setup preconf blocks topic.
 	preconfBlocksV1Logger := log.New("topic", "preconfBlocksV1")
-	preconfBlocksV1Validator := guardGossipValidator(log, logValidationResult(self, "validated preconfBlockv1", preconfBlocksV1Logger, BuildPreconfBlocksValidator(v3Logger, cfg, runCfg, eth.BlockV3)))
+	preconfBlocksV1Validator := guardGossipValidator(preconfBlocksV1Logger, logValidationResult(self, "validated preconfBlockv1", preconfBlocksV1Logger, BuildPreconfBlocksValidator(preconfBlocksV1Logger, cfg, runCfg, eth.BlockV1)))
 	preconfBlocksV1, err := newBlockTopic(p2pCtx, preconfBlocksTopicV1(cfg), ps, preconfBlocksV1Logger, gossipIn, preconfBlocksV1Validator)
 	if err != nil {
 		p2pCancel()
