@@ -311,9 +311,6 @@ func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg Goss
 
 		payload := envelope.ExecutionPayload
 
-		// rounding down to seconds is fine here.
-		now := uint64(time.Now().Unix())
-
 		// [REJECT] if the `payload` is null
 		if payload == nil {
 			log.Warn("payload is empty", "peer", id)
@@ -328,12 +325,6 @@ func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg Goss
 		// [REJECT] if the `coinbase` in the `payload` is empty
 		if payload.FeeRecipient == (common.Address{}) {
 			log.Warn("empty coinbase in payload", "peer", id)
-			return pubsub.ValidationReject
-		}
-
-		// [REJECT] if the `blockParams.timestamp` is older than 60 seconds in the past
-		if uint64(payload.Timestamp) < now-60 {
-			log.Warn("payload is too old", "timestamp", uint64(payload.Timestamp))
 			return pubsub.ValidationReject
 		}
 
