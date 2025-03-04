@@ -61,6 +61,10 @@ type GossipRuntimeConfig interface {
 	P2PSequencerAddress() common.Address
 }
 
+type PreconfGossipRuntimeConfig interface {
+	P2PSequencerAddresses() []common.Address
+}
+
 //go:generate mockery --name GossipMetricer
 type GossipMetricer interface {
 	RecordGossipEvent(evType int32)
@@ -534,6 +538,31 @@ func verifyBlockSignature(log log.Logger, cfg *rollup.Config, runCfg GossipRunti
 		return pubsub.ValidationReject
 	}
 	addr := crypto.PubkeyToAddress(*pub)
+
+	// CHANGE(taiko): check if the signer is in the whitelist.
+	if cfg, ok := runCfg.(PreconfGossipRuntimeConfig); ok {
+		// If there are no configured p2p sequencer addresses, accept the block.
+		// TODO: Remove this check once we have a real whitelist of sequencer addresses.
+		if len(cfg.P2PSequencerAddresses()) == 0 {
+			log.Warn("no configured p2p sequencer addresses", "peer", id, "addr", addr)
+			return pubsub.ValidationAccept
+		}
+
+		// If the signer is in the whitelist, accept the block.
+		for _, expected := range cfg.P2PSequencerAddresses() {
+			// If the signer is an empty address, accept the block.
+			// TODO: Remove this check once we have a real whitelist of sequencer addresses.
+			if expected == (common.Address{}) {
+				log.Warn("empty no configured p2p sequencer address", "peer", id, "addr", addr)
+				return pubsub.ValidationAccept
+			} else if addr == expected {
+				return pubsub.ValidationAccept
+			}
+		}
+
+		log.Warn("unexpected block authors", "err", err, "peer", id, "addrs", cfg.P2PSequencerAddresses())
+		return pubsub.ValidationReject
+	}
 
 	// In the future we may load & validate block metadata before checking the signature.
 	// And then check the signer based on the metadata, to support e.g. multiple p2p signers at the same time.
