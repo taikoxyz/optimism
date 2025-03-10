@@ -148,8 +148,10 @@ func CalcBlobFee(excessBlobGas uint64) *big.Int {
 }
 
 var (
-	minBlobGasPrice            = big.NewInt(params.BlobTxMinBlobGasprice)
-	blobGaspriceUpdateFraction = big.NewInt(params.BlobTxBlobGaspriceUpdateFraction)
+	// CHANGE(taiko): changes for taiko-geth compatibility.
+	BlobTxBlobGaspriceUpdateFraction = 3338477 // Controls the maximum rate of change for blob gas price
+	minBlobGasPrice                  = big.NewInt(params.BlobTxMinBlobGasprice)
+	blobGaspriceUpdateFraction       = big.NewInt(int64(BlobTxBlobGaspriceUpdateFraction))
 )
 
 // fakeExponential approximates factor * e ** (numerator / denominator) using
