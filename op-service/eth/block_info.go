@@ -4,8 +4,8 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -61,7 +61,7 @@ func (b blockInfo) BlobBaseFee() *big.Int {
 	if ebg == nil {
 		return nil
 	}
-	return eip4844.CalcBlobFee(*ebg)
+	return CalcBlobFee(*ebg)
 }
 
 func (b blockInfo) HeaderRLP() ([]byte, error) {
@@ -114,7 +114,7 @@ func (h headerBlockInfo) BlobBaseFee() *big.Int {
 	if h.ExcessBlobGas == nil {
 		return nil
 	}
-	return eip4844.CalcBlobFee(*h.ExcessBlobGas)
+	return CalcBlobFee(*h.ExcessBlobGas)
 }
 
 func (h headerBlockInfo) ReceiptHash() common.Hash {
@@ -140,4 +140,33 @@ func (h headerBlockInfo) HeaderRLP() ([]byte, error) {
 // HeaderBlockInfo returns h as a BlockInfo implementation.
 func HeaderBlockInfo(h *types.Header) BlockInfo {
 	return headerBlockInfo{h}
+}
+
+// CHANGE(taiko): CalcBlobFee calculates the blobfee from the header's excess blob gas field.
+func CalcBlobFee(excessBlobGas uint64) *big.Int {
+	return fakeExponential(minBlobGasPrice, new(big.Int).SetUint64(excessBlobGas), blobGaspriceUpdateFraction)
+}
+
+var (
+	// CHANGE(taiko): changes for taiko-geth compatibility.
+	BlobTxBlobGaspriceUpdateFraction = 3338477 // Controls the maximum rate of change for blob gas price
+	minBlobGasPrice                  = big.NewInt(params.BlobTxMinBlobGasprice)
+	blobGaspriceUpdateFraction       = big.NewInt(int64(BlobTxBlobGaspriceUpdateFraction))
+)
+
+// fakeExponential approximates factor * e ** (numerator / denominator) using
+// Taylor expansion.
+func fakeExponential(factor, numerator, denominator *big.Int) *big.Int {
+	var (
+		output = new(big.Int)
+		accum  = new(big.Int).Mul(factor, denominator)
+	)
+	for i := 1; accum.Sign() > 0; i++ {
+		output.Add(output, accum)
+
+		accum.Mul(accum, numerator)
+		accum.Div(accum, denominator)
+		accum.Div(accum, big.NewInt(int64(i)))
+	}
+	return output.Div(output, denominator)
 }

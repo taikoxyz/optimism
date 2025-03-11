@@ -9,16 +9,19 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
-	"github.com/ethereum/go-ethereum/params"
 )
 
 const (
-	BlobSize          = 4096 * 32
-	MaxBlobDataSize   = (4*31+3)*1024 - 4
-	EncodingVersion   = 0
-	VersionOffset     = 1    // offset of the version byte in the blob encoding
-	Rounds            = 1024 // number of encode/decode rounds
-	MaxBlobsPerBlobTx = params.MaxBlobGasPerBlock / params.BlobTxBlobGasPerBlob
+	BlobSize        = 4096 * 32
+	MaxBlobDataSize = (4*31+3)*1024 - 4
+	EncodingVersion = 0
+	VersionOffset   = 1    // offset of the version byte in the blob encoding
+	Rounds          = 1024 // number of encode/decode rounds
+	// CHANGE(taiko): changes for taiko-geth compatibility.
+	BlobTxBlobGasPerBlob        = 1 << 17                  // Gas consumption of a single data blob (== blob byte size)
+	BlobTxTargetBlobGasPerBlock = 3 * BlobTxBlobGasPerBlob // Target consumable blob gas for data blobs per block (for 1559-like pricing)
+	MaxBlobGasPerBlock          = 6 * BlobTxBlobGasPerBlob // Maximum consumable blob gas for data blobs per block
+	MaxBlobsPerBlobTx           = MaxBlobGasPerBlock / BlobTxBlobGasPerBlob
 )
 
 var (
