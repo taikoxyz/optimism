@@ -27,7 +27,7 @@ import (
 )
 
 func NewConfig(ctx *cli.Context, rollupCfg *rollup.Config) (*p2p.Config, error) {
-	conf := &p2p.Config{}
+	conf := &p2p.Config{Taiko: rollupCfg.Taiko}
 
 	if ctx.Bool(flags.DisableP2PName) {
 		conf.DisableP2P = true
