@@ -192,7 +192,7 @@ func loadDiscoveryOpts(conf *p2p.Config, ctx *cli.Context) error {
 	}
 	if len(bootnodes) > 0 {
 		conf.Bootnodes = bootnodes
-	} else {
+	} else if !conf.Taiko { // // CHANGE(taiko): Don't use default bootnodes for Taiko.
 		conf.Bootnodes = p2p.DefaultBootnodes
 	}
 

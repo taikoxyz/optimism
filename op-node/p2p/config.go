@@ -132,6 +132,9 @@ type Config struct {
 	SyncOnlyReqToStatic bool
 
 	EnablePingService bool
+
+	// CHANGE(taiko): Add Taiko flag to the config
+	Taiko bool `json:"taiko,omitempty"`
 }
 
 func DefaultConnManager(conf *Config) (connmgr.ConnManager, error) {
