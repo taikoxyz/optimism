@@ -410,7 +410,7 @@ func (s *SyncClient) mainLoop() {
 			s.log.Info("Checking in flight", "num", check.num)
 			check.result <- s.inFlight.get(check.num)
 		case <-s.resCtx.Done():
-			s.log.Info("stopped P2P req-resp L2 block sync client")
+			s.log.Warn("stopped P2P req-resp L2 block sync client")
 			return
 		}
 	}
@@ -560,7 +560,7 @@ func (s *SyncClient) peerLoop(ctx context.Context, id peer.ID) {
 	}()
 
 	log := s.log.New("peer", id)
-	log.Info("Starting P2P sync client event loop")
+	log.Debug("Starting P2P sync client event loop")
 
 	// Implement the same rate limits as the server does per-peer,
 	// so we don't be too aggressive to the server.
