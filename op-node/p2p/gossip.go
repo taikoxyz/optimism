@@ -791,7 +791,7 @@ func newBlockTopic(ctx context.Context, topicId string, ps *pubsub.PubSub, log l
 
 	go LogTopicEvents(ctx, log, blocksTopicEvents)
 
-	subscription, err := blocksTopic.Subscribe()
+	subscription, err := blocksTopic.Subscribe(pubsub.WithBufferSize(768)) // CHANGE(taiko): change buffer size to `maxBlocksPerBatch`
 	if err != nil {
 		err = errors.Join(err, blocksTopic.Close())
 		return nil, fmt.Errorf("failed to subscribe to blocks gossip topic: %w", err)
