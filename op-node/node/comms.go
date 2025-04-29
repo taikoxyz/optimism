@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/ethereum-optimism/optimism/op-service/eth"
@@ -12,6 +13,8 @@ import (
 type Tracer interface {
 	OnNewL1Head(ctx context.Context, sig eth.L1BlockRef)
 	OnUnsafeL2Payload(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope)
+	OnUnsafeL2Request(ctx context.Context, from peer.ID, hash common.Hash)
+	OnUnsafeL2Response(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope)
 	OnPublishL2Payload(ctx context.Context, payload *eth.ExecutionPayloadEnvelope)
 }
 
@@ -20,6 +23,12 @@ type noOpTracer struct{}
 func (n noOpTracer) OnNewL1Head(ctx context.Context, sig eth.L1BlockRef) {}
 
 func (n noOpTracer) OnUnsafeL2Payload(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope) {
+}
+
+func (n noOpTracer) OnUnsafeL2Response(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope) {
+}
+
+func (n noOpTracer) OnUnsafeL2Request(ctx context.Context, from peer.ID, hash common.Hash) {
 }
 
 func (n noOpTracer) OnPublishL2Payload(ctx context.Context, payload *eth.ExecutionPayloadEnvelope) {}

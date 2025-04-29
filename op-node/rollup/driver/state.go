@@ -61,7 +61,9 @@ type Driver struct {
 
 	// L2 Signals:
 
-	unsafeL2Payloads chan *eth.ExecutionPayloadEnvelope
+	unsafeL2Payloads  chan *eth.ExecutionPayloadEnvelope
+	unsafeL2Responses chan *eth.ExecutionPayloadEnvelope
+	unsafeL2Requests  chan common.Hash
 
 	sequencer sequencing.SequencerIface
 	network   Network // may be nil, network for is optional
@@ -138,6 +140,24 @@ func (s *Driver) OnUnsafeL2Payload(ctx context.Context, envelope *eth.ExecutionP
 	case <-ctx.Done():
 		return ctx.Err()
 	case s.unsafeL2Payloads <- envelope:
+		return nil
+	}
+}
+
+func (s *Driver) OnUnsafeL2Request(ctx context.Context, hash common.Hash) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case s.unsafeL2Requests <- hash:
+		return nil
+	}
+}
+
+func (s *Driver) OnUnsafeL2Response(ctx context.Context, envelope *eth.ExecutionPayloadEnvelope) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case s.unsafeL2Responses <- envelope:
 		return nil
 	}
 }

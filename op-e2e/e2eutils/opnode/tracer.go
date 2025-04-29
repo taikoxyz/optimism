@@ -3,6 +3,7 @@ package opnode
 import (
 	"context"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/ethereum-optimism/optimism/op-node/node"
@@ -12,6 +13,8 @@ import (
 type FnTracer struct {
 	OnNewL1HeadFn        func(ctx context.Context, sig eth.L1BlockRef)
 	OnUnsafeL2PayloadFn  func(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope)
+	OnUnsafeL2ResponseFn func(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope)
+	OnUnsafeL2RequestFn  func(ctx context.Context, from peer.ID, hash common.Hash)
 	OnPublishL2PayloadFn func(ctx context.Context, payload *eth.ExecutionPayloadEnvelope)
 }
 
@@ -24,6 +27,18 @@ func (n *FnTracer) OnNewL1Head(ctx context.Context, sig eth.L1BlockRef) {
 func (n *FnTracer) OnUnsafeL2Payload(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope) {
 	if n.OnUnsafeL2PayloadFn != nil {
 		n.OnUnsafeL2PayloadFn(ctx, from, payload)
+	}
+}
+
+func (n *FnTracer) OnUnsafeL2Request(ctx context.Context, from peer.ID, hash common.Hash) {
+	if n.OnUnsafeL2RequestFn != nil {
+		n.OnUnsafeL2RequestFn(ctx, from, hash)
+	}
+}
+
+func (n *FnTracer) OnUnsafeL2Response(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope) {
+	if n.OnUnsafeL2ResponseFn != nil {
+		n.OnUnsafeL2ResponseFn(ctx, from, payload)
 	}
 }
 

@@ -187,6 +187,7 @@ func (n *NodeP2P) init(
 		n.peerMonitor.Start()
 	}
 	n.appScorer.start()
+
 	return nil
 }
 
