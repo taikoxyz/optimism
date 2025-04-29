@@ -766,6 +766,7 @@ type GossipOut interface {
 	GossipTopicInfo
 	PublishL2Payload(ctx context.Context, msg *eth.ExecutionPayloadEnvelope, signer Signer) error
 	PublishL2RequestResponse(ctx context.Context, msg *eth.ExecutionPayloadEnvelope, signer Signer) error
+	PublishL2Request(ctx context.Context, hash common.Hash) error
 	Close() error
 }
 
