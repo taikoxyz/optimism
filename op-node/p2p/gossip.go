@@ -495,35 +495,7 @@ func BuildPreconfBlocksResponseValidator(log log.Logger, cfg *rollup.Config, run
 // CHANGE(taiko): add preconfBlocksRequest topic validator
 func BuildPreconfBlocksRequestValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig) pubsub.ValidatorEx {
 	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
-		// [REJECT] if the compression is not valid
-		outLen, err := snappy.DecodedLen(message.Data)
-		if err != nil {
-			log.Warn("invalid snappy compression length data", "err", err, "peer", id)
-			return pubsub.ValidationReject
-		}
-		if outLen > maxGossipSize {
-			log.Warn("possible snappy zip bomb, decoded length is too large", "decoded_length", outLen, "peer", id)
-			return pubsub.ValidationReject
-		}
-		if outLen < minGossipSize {
-			log.Warn("rejecting undersized gossip payload")
-			return pubsub.ValidationReject
-		}
-
-		res := msgBufPool.Get().(*[]byte)
-		defer msgBufPool.Put(res)
-		data, err := snappy.Decode((*res)[:cap(*res)], message.Data)
-		if err != nil {
-			log.Warn("invalid snappy compression", "err", err, "peer", id)
-			return pubsub.ValidationReject
-		}
-		// if we ended up growing the slice capacity, fine, keep the larger one.
-		if cap(data) > cap(*res) {
-			*res = data[:cap(data)]
-		}
-
-		// message starts with compact-encoding secp256k1 encoded signature
-		message.ValidatorData = data[:]
+		message.ValidatorData = message.Data
 
 		return pubsub.ValidationAccept
 	}
