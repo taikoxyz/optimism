@@ -719,7 +719,7 @@ func verifyBlockResponseSignature(log log.Logger, cfg *rollup.Config, runCfg Gos
 
 	pub, err := crypto.SigToPub(signingHash[:], signatureBytes)
 	if err != nil {
-		log.Warn("invalid block signature", "err", err, "peer", id)
+		log.Warn("invalid block response signature", "err", err, "peer", id)
 		return pubsub.ValidationReject
 	}
 	addr := crypto.PubkeyToAddress(*pub)
@@ -729,12 +729,19 @@ func verifyBlockResponseSignature(log log.Logger, cfg *rollup.Config, runCfg Gos
 		if len(cfg.P2PSequencerAddresses()) == 0 {
 			return pubsub.ValidationIgnore
 		}
-
-		if addr == cfg.P2PSequencerAddresses()[0] {
-			return pubsub.ValidationAccept
+		// If the signer is in the whitelist, accept the block.
+		for _, expected := range cfg.P2PSequencerAddresses() {
+			// If the signer is an empty address, accept the block.
+			// TODO: Remove this check once we have a real whitelist of sequencer addresses.
+			if expected == (common.Address{}) {
+				log.Warn("empty no configured p2p sequencer address", "peer", id, "addr", addr)
+				return pubsub.ValidationAccept
+			} else if addr == expected {
+				return pubsub.ValidationAccept
+			}
 		}
 
-		log.Warn("unexpected block authors", "err", err, "peer", id, "addr", cfg.P2PSequencerAddresses())
+		log.Warn("unexpected block response authors", "err", err, "peer", id, "addr", cfg.P2PSequencerAddresses())
 		return pubsub.ValidationReject
 	}
 
@@ -744,10 +751,10 @@ func verifyBlockResponseSignature(log log.Logger, cfg *rollup.Config, runCfg Gos
 	// This means we may drop old payloads upon key rotation,
 	// but this can be recovered from like any other missed unsafe payload.
 	if expected := runCfg.P2PSequencerAddress(); expected == (common.Address{}) {
-		log.Warn("no configured p2p sequencer address, ignoring gossiped block", "peer", id, "addr", addr)
+		log.Warn("no configured p2p sequencer address, ignoring gossiped block response", "peer", id, "addr", addr)
 		return pubsub.ValidationIgnore
 	} else if addr != expected {
-		log.Warn("unexpected block author", "err", err, "peer", id, "addr", addr, "expected", expected)
+		log.Warn("unexpected block response author", "err", err, "peer", id, "addr", addr, "expected", expected)
 		return pubsub.ValidationReject
 	}
 	return pubsub.ValidationAccept
