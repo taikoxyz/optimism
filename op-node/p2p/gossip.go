@@ -45,10 +45,6 @@ const (
 	peerScoreInspectFrequency = 15 * time.Second
 )
 
-var (
-	responseTracker = NewResponseTracker()
-)
-
 // Message domains, the msg id function uncompresses to keep data monomorphic,
 // but invalid compressed data will need a unique different id.
 
@@ -486,8 +482,6 @@ func BuildPreconfBlocksResponseValidator(log log.Logger, cfg *rollup.Config, run
 		// remember the decoded payload for later usage in topic subscriber.
 		message.ValidatorData = &envelope
 
-		responseTracker.remove(payload.BlockHash)
-
 		return pubsub.ValidationAccept
 	}
 }
@@ -897,8 +891,6 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 
 func (p *publisher) PublishL2Request(ctx context.Context, hash common.Hash) error {
 	data := hash.Bytes()
-
-	responseTracker.addRequest(hash)
 
 	return p.preconfBlocksRequest.topic.Publish(ctx, data)
 }
