@@ -681,7 +681,12 @@ func verifyBlockSignature(log log.Logger, cfg *rollup.Config, runCfg GossipRunti
 
 		// If the signer is in the whitelist, accept the block.
 		for _, expected := range cfg.P2PSequencerAddresses() {
-			if addr == expected {
+			// If the signer is an empty address, accept the block.
+			// TODO: Remove this check once we have a real whitelist of sequencer addresses.
+			if expected == (common.Address{}) {
+				log.Warn("empty no configured p2p sequencer address", "peer", id, "addr", addr)
+				return pubsub.ValidationAccept
+			} else if addr == expected {
 				return pubsub.ValidationAccept
 			}
 		}
