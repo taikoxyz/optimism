@@ -63,7 +63,6 @@ type GossipRuntimeConfig interface {
 
 type PreconfGossipRuntimeConfig interface {
 	P2PSequencerAddresses() []common.Address
-	EnvelopeByHash(ctx context.Context, hash common.Hash) (*eth.ExecutionPayloadEnvelope, error)
 }
 
 //go:generate mockery --name GossipMetricer
