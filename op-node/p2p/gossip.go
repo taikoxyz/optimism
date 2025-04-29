@@ -495,7 +495,7 @@ func BuildPreconfBlocksResponseValidator(log log.Logger, cfg *rollup.Config, run
 // CHANGE(taiko): add preconfBlocksRequest topic validator
 func BuildPreconfBlocksRequestValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig) pubsub.ValidatorEx {
 	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
-		message.ValidatorData = message.Data
+		message.ValidatorData = common.BytesToHash(message.Data)
 
 		return pubsub.ValidationAccept
 	}
