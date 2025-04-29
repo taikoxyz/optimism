@@ -440,10 +440,10 @@ func BuildPreconfBlocksResponseValidator(log log.Logger, cfg *rollup.Config, run
 			return pubsub.ValidationReject
 		}
 
-		if !responseTracker.has(payload.BlockHash) {
-			log.Debug("didn't make request", "peer", id, "hash", payload.BlockHash.String())
-			return pubsub.ValidationIgnore
-		}
+		// if !responseTracker.has(payload.BlockHash) {
+		// 	log.Debug("didn't make request", "peer", id, "hash", payload.BlockHash.String())
+		// 	return pubsub.ValidationIgnore
+		// }
 
 		// [REJECT] if the `payload.Transactions` is null or empty
 		if len(payload.Transactions) == 0 {
