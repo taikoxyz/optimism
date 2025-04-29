@@ -3,7 +3,6 @@ package p2p
 import (
 	"sync"
 
-	"github.com/ethereum-optimism/optimism/op-service/eth"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -34,12 +33,11 @@ func (t *ResponseTracker) has(hash common.Hash) bool {
 
 // Called by OnUnsafeL2Response handler: if there's a waiting request,
 // push the envelope into the channel and clean up.
-func (t *ResponseTracker) handleResponse(env *eth.ExecutionPayloadEnvelope) {
-	h := env.ExecutionPayload.BlockHash
+func (t *ResponseTracker) remove(hash common.Hash) {
 	t.mu.Lock()
-	_, ok := t.pending[h]
+	_, ok := t.pending[hash]
 	if ok {
-		delete(t.pending, h)
+		delete(t.pending, hash)
 	}
 
 	t.mu.Unlock()

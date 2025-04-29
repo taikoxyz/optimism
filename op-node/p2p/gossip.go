@@ -485,6 +485,9 @@ func BuildPreconfBlocksResponseValidator(log log.Logger, cfg *rollup.Config, run
 
 		// remember the decoded payload for later usage in topic subscriber.
 		message.ValidatorData = &envelope
+
+		responseTracker.remove(payload.BlockHash)
+
 		return pubsub.ValidationAccept
 	}
 }
