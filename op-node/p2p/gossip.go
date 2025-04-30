@@ -516,12 +516,12 @@ func BuildPreconfBlocksRequestValidator(log log.Logger, cfg *rollup.Config, runC
 	}
 
 	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
-
 		hash := common.BytesToHash(message.Data)
 
 		seen, ok := hashLRU.Get(hash)
 		if !ok {
 			seen = new(seenHashes)
+			seen.blockHashes = make(map[common.Hash]uint64)
 			hashLRU.Add(hash, seen)
 		}
 
