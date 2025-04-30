@@ -488,7 +488,7 @@ func BuildPreconfBlocksResponseValidator(log log.Logger, cfg *rollup.Config, run
 		if count, hasSeen := seen.hasSeen(payload.BlockHash); count > 5 {
 			// [REJECT] if more than 5 blocks have been seen with the same block height
 			log.Warn("seen too many different blocks at same height", "height", payload.BlockNumber)
-			return pubsub.ValidationReject
+			return pubsub.ValidationIgnore
 		} else if hasSeen {
 			// [IGNORE] if the block has already been seen
 			log.Warn("validated already seen message again")
@@ -529,8 +529,6 @@ func BuildPreconfBlocksRequestValidator(log log.Logger, cfg *rollup.Config, runC
 			return pubsub.ValidationIgnore
 		}
 
-		// mark it as seen. (note: with concurrent validation more than 5 preconf blocks may be marked as seen still,
-		// but validator concurrency is limited anyway)
 		seen.markSeen(hash)
 		message.ValidatorData = hash
 
