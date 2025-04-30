@@ -526,7 +526,7 @@ func BuildPreconfBlocksRequestValidator(log log.Logger, cfg *rollup.Config, runC
 		}
 
 		if count, hasSeen := seen.numSeen(hash); hasSeen && count > 5 {
-			return pubsub.ValidationReject
+			return pubsub.ValidationIgnore
 		}
 
 		// mark it as seen. (note: with concurrent validation more than 5 preconf blocks may be marked as seen still,
