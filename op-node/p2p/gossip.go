@@ -244,9 +244,30 @@ func guardGossipValidator(log log.Logger, fn pubsub.ValidatorEx) pubsub.Validato
 	}
 }
 
+type seenHashes struct {
+	sync.Mutex
+	blockHashes map[common.Hash]uint64
+}
 type seenBlocks struct {
 	sync.Mutex
 	blockHashes []common.Hash
+}
+
+func (sb *seenHashes) numSeen(h common.Hash) (count uint64, hasSeen bool) {
+	sb.Lock()
+	defer sb.Unlock()
+	count, hasSeen = sb.blockHashes[h]
+	return
+}
+
+func (sb *seenHashes) markSeen(h common.Hash) {
+	sb.Lock()
+	defer sb.Unlock()
+	if _, ok := sb.blockHashes[h]; !ok {
+		sb.blockHashes[h] = 1
+	} else {
+		sb.blockHashes[h]++
+	}
 }
 
 // hasSeen checks if the hash has been marked as seen, and how many have been seen.
@@ -487,8 +508,35 @@ func BuildPreconfBlocksResponseValidator(log log.Logger, cfg *rollup.Config, run
 
 // CHANGE(taiko): add preconfBlocksRequest topic validator
 func BuildPreconfBlocksRequestValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig) pubsub.ValidatorEx {
+	// Seen block hashes per block height
+	// uint64 -> *seenBlocks
+	hashLRU, err := lru.New[common.Hash, *seenHashes](1000)
+	if err != nil {
+		panic(fmt.Errorf("failed to set up block height LRU cache: %w", err))
+	}
+
 	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
-		message.ValidatorData = common.BytesToHash(message.Data)
+
+		hash := common.BytesToHash(message.Data)
+
+		seen, ok := hashLRU.Get(hash)
+		if !ok {
+			seen = new(seenHashes)
+			hashLRU.Add(hash, seen)
+		}
+
+		if count, hasSeen := seen.numSeen(hash); count > 5 {
+			return pubsub.ValidationReject
+		} else if hasSeen {
+			// [IGNORE] if the block has already been seen
+			log.Warn("validated already seen message again")
+			return pubsub.ValidationIgnore
+		}
+
+		// mark it as seen. (note: with concurrent validation more than 5 preconf blocks may be marked as seen still,
+		// but validator concurrency is limited anyway)
+		seen.markSeen(hash)
+		message.ValidatorData = hash
 
 		return pubsub.ValidationAccept
 	}
