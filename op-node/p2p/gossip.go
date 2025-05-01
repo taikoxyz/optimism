@@ -485,13 +485,9 @@ func BuildPreconfBlocksResponseValidator(log log.Logger, cfg *rollup.Config, run
 			preconfblockLRU.Add(uint64(payload.BlockNumber), seen)
 		}
 
-		if count, hasSeen := seen.hasSeen(payload.BlockHash); count > 5 {
+		if count, _ := seen.hasSeen(payload.BlockHash); count > 5 {
 			// [REJECT] if more than 5 blocks have been seen with the same block height
 			log.Warn("seen too many different blocks at same height", "height", payload.BlockNumber)
-			return pubsub.ValidationIgnore
-		} else if hasSeen {
-			// [IGNORE] if the block has already been seen
-			log.Warn("validated already seen message again")
 			return pubsub.ValidationIgnore
 		}
 
