@@ -204,6 +204,7 @@ type (
 )
 
 type ExecutionPayloadEnvelope struct {
+	EndOfSequencing       *bool             `json:"endOfSequencing,omitempty"`
 	ParentBeaconBlockRoot *common.Hash      `json:"parentBeaconBlockRoot,omitempty"`
 	ExecutionPayload      *ExecutionPayload `json:"executionPayload"`
 }
