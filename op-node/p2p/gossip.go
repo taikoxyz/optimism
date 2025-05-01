@@ -174,7 +174,7 @@ func BuildGlobalGossipParams(cfg *rollup.Config) pubsub.GossipSubParams {
 	params.Dlazy = DefaultMeshDlazy            // gossip target
 	params.HeartbeatInterval = gossipHeartbeat // interval of heartbeat
 	params.FanoutTTL = 24 * time.Second        // ttl for fanout maps for topics we are not subscribed to but have published to
-	params.HistoryLength = 4                   // number of windows to retain full messages in cache for IWANT responses
+	params.HistoryLength = 5                   // number of windows to retain full messages in cache for IWANT responses
 	params.HistoryGossip = 3                   // number of windows to gossip about
 
 	return params
