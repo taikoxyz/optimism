@@ -955,11 +955,11 @@ func (p *publisher) PublishL2RequestResponse(ctx context.Context, envelope *eth.
 
 	if envelope.ParentBeaconBlockRoot != nil {
 		if _, err := envelope.MarshalSSZ(buf); err != nil {
-			return fmt.Errorf("failed to encoded execution payload envelope to publish: %w", err)
+			return fmt.Errorf("failed to encode execution payload envelope to publish: %w", err)
 		}
 	} else {
 		if _, err := envelope.ExecutionPayload.MarshalSSZ(buf); err != nil {
-			return fmt.Errorf("failed to encoded execution payload to publish: %w", err)
+			return fmt.Errorf("failed to encode execution payload to publish: %w", err)
 		}
 	}
 
