@@ -92,6 +92,7 @@ func preconfBlocksRequestTopic(cfg *rollup.Config) string {
 	return fmt.Sprintf("/taiko/%s/0/requestPreconfBlocks", cfg.L2ChainID.String())
 }
 
+// CHANGE(taiko): create preconf blocks topic.
 func preconfBlocksResponseTopic(cfg *rollup.Config) string {
 	return fmt.Sprintf("/taiko/%s/0/responsePreconfBlocks", cfg.L2ChainID.String())
 }
@@ -244,30 +245,9 @@ func guardGossipValidator(log log.Logger, fn pubsub.ValidatorEx) pubsub.Validato
 	}
 }
 
-type seenHashes struct {
-	sync.Mutex
-	blockHashes map[common.Hash]uint64
-}
 type seenBlocks struct {
 	sync.Mutex
 	blockHashes []common.Hash
-}
-
-func (sb *seenHashes) numSeen(h common.Hash) (count uint64, hasSeen bool) {
-	sb.Lock()
-	defer sb.Unlock()
-	count, hasSeen = sb.blockHashes[h]
-	return
-}
-
-func (sb *seenHashes) markSeen(h common.Hash) {
-	sb.Lock()
-	defer sb.Unlock()
-	if _, ok := sb.blockHashes[h]; !ok {
-		sb.blockHashes[h] = 1
-	} else {
-		sb.blockHashes[h]++
-	}
 }
 
 // hasSeen checks if the hash has been marked as seen, and how many have been seen.
@@ -287,6 +267,31 @@ func (sb *seenBlocks) markSeen(h common.Hash) {
 	sb.Lock()
 	defer sb.Unlock()
 	sb.blockHashes = append(sb.blockHashes, h)
+}
+
+// CHANGE(taiko): add seenHashes cache.
+type seenHashes struct {
+	sync.Mutex
+	blockHashes map[common.Hash]uint64
+}
+
+// CHANGE(taiko): hasSeen checks if the hash has been marked as seen, and how many have been seen.
+func (sh *seenHashes) numSeen(h common.Hash) (count uint64, hasSeen bool) {
+	sh.Lock()
+	defer sh.Unlock()
+	count, hasSeen = sh.blockHashes[h]
+	return
+}
+
+// CHANGE(taiko): markSeen marks the block hash as seen
+func (sh *seenHashes) markSeen(h common.Hash) {
+	sh.Lock()
+	defer sh.Unlock()
+	if _, ok := sh.blockHashes[h]; !ok {
+		sh.blockHashes[h] = 1
+	} else {
+		sh.blockHashes[h]++
+	}
 }
 
 // CHANGE(taiko): add preconfBlocks topic validator
@@ -938,9 +943,7 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 }
 
 func (p *publisher) PublishL2Request(ctx context.Context, hash common.Hash) error {
-	data := hash.Bytes()
-
-	return p.preconfBlocksRequest.topic.Publish(ctx, data)
+	return p.preconfBlocksRequest.topic.Publish(ctx, hash.Bytes())
 }
 
 func (p *publisher) PublishL2RequestResponse(ctx context.Context, envelope *eth.ExecutionPayloadEnvelope, signer Signer) error {

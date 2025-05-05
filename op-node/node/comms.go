@@ -25,10 +25,11 @@ func (n noOpTracer) OnNewL1Head(ctx context.Context, sig eth.L1BlockRef) {}
 func (n noOpTracer) OnUnsafeL2Payload(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope) {
 }
 
-func (n noOpTracer) OnUnsafeL2Response(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope) {
-}
+// CHANGE(taiko): add OnUnsafeL2Request handler
+func (n noOpTracer) OnUnsafeL2Request(ctx context.Context, from peer.ID, hash common.Hash) {}
 
-func (n noOpTracer) OnUnsafeL2Request(ctx context.Context, from peer.ID, hash common.Hash) {
+// CHANGE(taiko): add OnUnsafeL2Response handler
+func (n noOpTracer) OnUnsafeL2Response(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope) {
 }
 
 func (n noOpTracer) OnPublishL2Payload(ctx context.Context, payload *eth.ExecutionPayloadEnvelope) {}

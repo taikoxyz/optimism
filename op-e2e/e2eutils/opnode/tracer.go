@@ -30,12 +30,14 @@ func (n *FnTracer) OnUnsafeL2Payload(ctx context.Context, from peer.ID, payload 
 	}
 }
 
+// CHANGE(taiko): add OnUnsafeL2Request handler
 func (n *FnTracer) OnUnsafeL2Request(ctx context.Context, from peer.ID, hash common.Hash) {
 	if n.OnUnsafeL2RequestFn != nil {
 		n.OnUnsafeL2RequestFn(ctx, from, hash)
 	}
 }
 
+// CHANGE(taiko): add OnUnsafeL2Response handler
 func (n *FnTracer) OnUnsafeL2Response(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope) {
 	if n.OnUnsafeL2ResponseFn != nil {
 		n.OnUnsafeL2ResponseFn(ctx, from, payload)
