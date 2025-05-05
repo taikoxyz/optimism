@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
 	"sync"
 	"time"
 
@@ -87,9 +88,14 @@ func preconfBlocksTopicV1(cfg *rollup.Config) string {
 	return fmt.Sprintf("/taiko/%s/0/preconfBlocks", cfg.L2ChainID.String())
 }
 
-// CHANGE(taiko): create preconf blocks topic.
+// CHANGE(taiko): create preconf blocks request topic.
 func preconfBlocksRequestTopic(cfg *rollup.Config) string {
 	return fmt.Sprintf("/taiko/%s/0/requestPreconfBlocks", cfg.L2ChainID.String())
+}
+
+// CHANGE(taiko): create preconf blocks end of sequencing request topic.
+func preconfBlocksEndOfSequencingRequestTopic(cfg *rollup.Config) string {
+	return fmt.Sprintf("/taiko/%s/0/requestEndOfSequencingPreconfBlocks", cfg.L2ChainID.String())
 }
 
 func preconfBlocksResponseTopic(cfg *rollup.Config) string {
@@ -99,7 +105,7 @@ func preconfBlocksResponseTopic(cfg *rollup.Config) string {
 // BuildSubscriptionFilter builds a simple subscription filter,
 // to help protect against peers spamming useless subscriptions.
 func BuildSubscriptionFilter(cfg *rollup.Config) pubsub.SubscriptionFilter {
-	return pubsub.NewAllowlistSubscriptionFilter(blocksTopicV1(cfg), blocksTopicV2(cfg), blocksTopicV3(cfg), preconfBlocksTopicV1(cfg), preconfBlocksRequestTopic(cfg), preconfBlocksResponseTopic(cfg)) // add more topics here in the future, if any.
+	return pubsub.NewAllowlistSubscriptionFilter(blocksTopicV1(cfg), blocksTopicV2(cfg), blocksTopicV3(cfg), preconfBlocksTopicV1(cfg), preconfBlocksRequestTopic(cfg), preconfBlocksResponseTopic(cfg), preconfBlocksEndOfSequencingRequestTopic(cfg)) // add more topics here in the future, if any.
 }
 
 var msgBufPool = sync.Pool{New: func() any {
@@ -248,10 +254,6 @@ type seenHashes struct {
 	sync.Mutex
 	blockHashes map[common.Hash]uint64
 }
-type seenBlocks struct {
-	sync.Mutex
-	blockHashes []common.Hash
-}
 
 func (sb *seenHashes) numSeen(h common.Hash) (count uint64, hasSeen bool) {
 	sb.Lock()
@@ -268,6 +270,11 @@ func (sb *seenHashes) markSeen(h common.Hash) {
 	} else {
 		sb.blockHashes[h]++
 	}
+}
+
+type seenBlocks struct {
+	sync.Mutex
+	blockHashes []common.Hash
 }
 
 // hasSeen checks if the hash has been marked as seen, and how many have been seen.
@@ -287,6 +294,28 @@ func (sb *seenBlocks) markSeen(h common.Hash) {
 	sb.Lock()
 	defer sb.Unlock()
 	sb.blockHashes = append(sb.blockHashes, h)
+}
+
+type seenEpochs struct {
+	sync.Mutex
+	epochs map[uint64]uint64
+}
+
+func (se *seenEpochs) numSeen(epoch uint64) (count uint64, hasSeen bool) {
+	se.Lock()
+	defer se.Unlock()
+	count, hasSeen = se.epochs[epoch]
+	return
+}
+
+func (se *seenEpochs) markSeen(epoch uint64) {
+	se.Lock()
+	defer se.Unlock()
+	if _, ok := se.epochs[epoch]; !ok {
+		se.epochs[epoch] = 1
+	} else {
+		se.epochs[epoch]++
+	}
 }
 
 // CHANGE(taiko): add preconfBlocks topic validator
@@ -526,6 +555,38 @@ func BuildPreconfBlocksRequestValidator(log log.Logger, cfg *rollup.Config, runC
 
 		seen.markSeen(hash)
 		message.ValidatorData = hash
+
+		return pubsub.ValidationAccept
+	}
+}
+
+// CHANGE(taiko): add preconfBlocksRequest topic validator
+func BuildPreconfBlocksEndOfSequencingRequestValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig) pubsub.ValidatorEx {
+	// Seen block hashes per block height
+	// uint64 -> *seenBlocks
+	epochLRU, err := lru.New[uint64, *seenEpochs](1000)
+	if err != nil {
+		panic(fmt.Errorf("failed to set up epoch LRU cache: %w", err))
+	}
+
+	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
+		// convert message.Data to uint256
+		epoch := big.NewInt(0).SetBytes(message.Data).Uint64()
+
+		seen, ok := epochLRU.Get(epoch)
+		if !ok {
+			seen = new(seenEpochs)
+			seen.epochs = make(map[uint64]uint64)
+			epochLRU.Add(epoch, seen)
+		}
+
+		if count, hasSeen := seen.numSeen(epoch); hasSeen && count > 5 {
+			return pubsub.ValidationIgnore
+		}
+
+		seen.markSeen(epoch)
+
+		message.ValidatorData = epoch
 
 		return pubsub.ValidationAccept
 	}
@@ -799,6 +860,7 @@ func verifyBlockResponseSignature(log log.Logger, cfg *rollup.Config, runCfg Gos
 type GossipIn interface {
 	OnUnsafeL2Payload(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error
 	OnUnsafeL2Request(ctx context.Context, from peer.ID, msg common.Hash) error
+	OnUnsafeL2EndOfSequencingRequest(ctx context.Context, from peer.ID, epoch uint64) error
 	OnUnsafeL2Response(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error
 }
 
@@ -814,6 +876,7 @@ type GossipOut interface {
 	PublishL2Payload(ctx context.Context, msg *eth.ExecutionPayloadEnvelope, signer Signer) error
 	PublishL2RequestResponse(ctx context.Context, msg *eth.ExecutionPayloadEnvelope, signer Signer) error
 	PublishL2Request(ctx context.Context, hash common.Hash) error
+	PublishL2EndOfSequencingRequest(ctx context.Context) error
 	Close() error
 }
 
@@ -845,9 +908,10 @@ type publisher struct {
 	blocksV2 *blockTopic
 	blocksV3 *blockTopic
 	// CHANGE(taiko): add preconf blocks topic
-	preconfBlocksV1       *blockTopic
-	preconfBlocksRequest  *blockTopic
-	preconfBlocksResponse *blockTopic
+	preconfBlocksV1                     *blockTopic
+	preconfBlocksRequest                *blockTopic
+	preconfBlocksResponse               *blockTopic
+	preconfBlocksEndOfSequencingRequest *blockTopic
 
 	runCfg GossipRuntimeConfig
 }
@@ -943,6 +1007,10 @@ func (p *publisher) PublishL2Request(ctx context.Context, hash common.Hash) erro
 	return p.preconfBlocksRequest.topic.Publish(ctx, data)
 }
 
+func (p *publisher) PublishL2EndOfSequencingRequest(ctx context.Context) error {
+	return p.preconfBlocksEndOfSequencingRequest.topic.Publish(ctx, nil)
+}
+
 func (p *publisher) PublishL2RequestResponse(ctx context.Context, envelope *eth.ExecutionPayloadEnvelope, signer Signer) error {
 	res := msgBufPool.Get().(*[]byte)
 	buf := bytes.NewBuffer((*res)[:0])
@@ -1030,6 +1098,15 @@ func JoinGossip(self peer.ID, ps *pubsub.PubSub, log log.Logger, cfg *rollup.Con
 		return nil, fmt.Errorf("failed to setup preconf blocks request p2p: %w", err)
 	}
 
+	// CHANGE(taiko): setup preconf blocks end of sequencing request topic
+	preconfBlocksEndOfSequencingRequestLogger := log.New("topic", "preconfBlockEndOfSequencingRequest")
+	preconfBlocksEndOfSequencingRequestValidator := guardGossipValidator(preconfBlocksEndOfSequencingRequestLogger, logValidationResult(self, "validated preconfBlocksEndOfSequencingRequest", preconfBlocksEndOfSequencingRequestLogger, BuildPreconfBlocksEndOfSequencingRequestValidator(preconfBlocksEndOfSequencingRequestLogger, cfg, runCfg)))
+	preconfBlocksEndOfSequencingRequest, err := newEndOfSequencingRequestTopic(p2pCtx, preconfBlocksEndOfSequencingRequestTopic(cfg), ps, preconfBlocksEndOfSequencingRequestLogger, gossipIn, preconfBlocksEndOfSequencingRequestValidator)
+	if err != nil {
+		p2pCancel()
+		return nil, fmt.Errorf("failed to setup preconf blocks end of sequencing request p2p: %w", err)
+	}
+
 	// CHANGE(taiko): setup preconf blocks response topic
 	respLogger := log.New("topic", "preconfBlockResponse")
 	respVal := guardGossipValidator(respLogger, logValidationResult(self, "validated preconfBlockResponse", respLogger, BuildPreconfBlocksResponseValidator(respLogger, cfg, runCfg, eth.BlockV1)))
@@ -1040,16 +1117,17 @@ func JoinGossip(self peer.ID, ps *pubsub.PubSub, log log.Logger, cfg *rollup.Con
 	}
 
 	return &publisher{
-		log:                   log,
-		cfg:                   cfg,
-		p2pCancel:             p2pCancel,
-		blocksV1:              blocksV1,
-		blocksV2:              blocksV2,
-		blocksV3:              blocksV3,
-		preconfBlocksV1:       preconfBlocksV1,
-		preconfBlocksRequest:  preconfBlocksRequest,
-		preconfBlocksResponse: preconfBlocksResponse,
-		runCfg:                runCfg,
+		log:                                 log,
+		cfg:                                 cfg,
+		p2pCancel:                           p2pCancel,
+		blocksV1:                            blocksV1,
+		blocksV2:                            blocksV2,
+		blocksV3:                            blocksV3,
+		preconfBlocksV1:                     preconfBlocksV1,
+		preconfBlocksRequest:                preconfBlocksRequest,
+		preconfBlocksResponse:               preconfBlocksResponse,
+		preconfBlocksEndOfSequencingRequest: preconfBlocksEndOfSequencingRequest,
+		runCfg:                              runCfg,
 	}, nil
 }
 
@@ -1082,6 +1160,44 @@ func newRequestTopic(ctx context.Context, topicId string, ps *pubsub.PubSub, log
 	}
 
 	subscriber := MakeSubscriber(log, RequestsHandler(gossipIn.OnUnsafeL2Request))
+	go subscriber(ctx, subscription)
+
+	return &blockTopic{
+		topic:  topic,
+		events: blocksTopicEvents,
+		sub:    subscription,
+	}, nil
+}
+
+func newEndOfSequencingRequestTopic(ctx context.Context, topicId string, ps *pubsub.PubSub, log log.Logger, gossipIn GossipIn, validator pubsub.ValidatorEx) (*blockTopic, error) {
+	err := ps.RegisterTopicValidator(topicId,
+		validator,
+		pubsub.WithValidatorTimeout(3*time.Second),
+		pubsub.WithValidatorConcurrency(4))
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to register gossip topic: %w", err)
+	}
+
+	topic, err := ps.Join(topicId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to join gossip topic: %w", err)
+	}
+
+	blocksTopicEvents, err := topic.EventHandler()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create blocks gossip topic handler: %w", err)
+	}
+
+	go LogTopicEvents(ctx, log, blocksTopicEvents)
+
+	subscription, err := topic.Subscribe(pubsub.WithBufferSize(768))
+	if err != nil {
+		err = errors.Join(err, topic.Close())
+		return nil, fmt.Errorf("failed to subscribe to blocks gossip topic: %w", err)
+	}
+
+	subscriber := MakeSubscriber(log, EndOfSequencingRequestsHandler(gossipIn.OnUnsafeL2EndOfSequencingRequest))
 	go subscriber(ctx, subscription)
 
 	return &blockTopic{
@@ -1147,6 +1263,16 @@ func RequestsHandler(onRequest func(ctx context.Context, from peer.ID, hash comm
 		payload, ok := msg.(common.Hash)
 		if !ok {
 			return fmt.Errorf("expected topic validator to parse and validate data into hash, but got %T", msg)
+		}
+		return onRequest(ctx, from, payload)
+	}
+}
+
+func EndOfSequencingRequestsHandler(onRequest func(ctx context.Context, from peer.ID, epoch uint64) error) MessageHandler {
+	return func(ctx context.Context, from peer.ID, msg any) error {
+		payload, ok := msg.(uint64)
+		if !ok {
+			return fmt.Errorf("expected topic validator to parse and validate data into uint64, but got %T", msg)
 		}
 		return onRequest(ctx, from, payload)
 	}
