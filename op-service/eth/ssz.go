@@ -437,47 +437,65 @@ func unmarshalTransactions(in []byte) (txs []Data, err error) {
 	return txs, nil
 }
 
-// UnmarshalSSZ decodes the ExecutionPayloadEnvelope as SSZ type
+// change(taiko):
+// UnmarshalSSZ reads 1B flag → nil/true, then root, then payload…
 func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader) error {
-	if scope < common.HashLength {
-		return fmt.Errorf("scope too small to decode execution payload envelope: %d", scope)
+	const hdr = 1 + common.HashLength
+	if scope < hdr {
+		return fmt.Errorf("scope too small: %d", scope)
 	}
 
-	data := make([]byte, common.HashLength)
-	n, err := r.Read(data)
-	if err != nil || n != common.HashLength {
+	var flag [1]byte
+	if _, err := io.ReadFull(r, flag[:]); err != nil {
+		return fmt.Errorf("read endOfSequencing: %w", err)
+	}
+	if flag[0] == 1 {
+		t := true
+		envelope.EndOfSequencing = &t
+	} else {
+		envelope.EndOfSequencing = nil
+	}
+
+	var root common.Hash
+	if _, err := io.ReadFull(r, root[:]); err != nil {
+		return fmt.Errorf("read parentBeaconBlockRoot: %w", err)
+	}
+	envelope.ParentBeaconBlockRoot = &root
+
+	payloadScope := scope - hdr
+	payload := new(ExecutionPayload)
+	if err := payload.UnmarshalSSZ(BlockV3, payloadScope, r); err != nil {
 		return err
 	}
+	envelope.ExecutionPayload = payload
 
-	envelope.ParentBeaconBlockRoot = &common.Hash{}
-	copy(envelope.ParentBeaconBlockRoot[:], data)
-
-	var payload ExecutionPayload
-	err = payload.UnmarshalSSZ(BlockV3, scope-32, r)
-	if err != nil {
-		return err
-	}
-
-	envelope.ExecutionPayload = &payload
 	return nil
 }
 
-// MarshalSSZ encodes the ExecutionPayload as SSZ type
+// change(taiko):
+// MarshalSSZ writes 1B flag + 32B root + payload…
 func (envelope *ExecutionPayloadEnvelope) MarshalSSZ(w io.Writer) (n int, err error) {
+	// EndOfSequencing is optional, allow to be nil.
 	if envelope.ExecutionPayload == nil || envelope.ParentBeaconBlockRoot == nil {
 		return 0, ErrMissingData
 	}
 
-	// write parent beacon block root
-	hashSize, err := w.Write(envelope.ParentBeaconBlockRoot[:])
-	if err != nil || hashSize != common.HashLength {
-		return 0, errors.New("unable to write parent beacon block hash")
+	flag := byte(0)
+	if envelope.EndOfSequencing != nil && *envelope.EndOfSequencing {
+		flag = 1
 	}
-
-	payloadSize, err := envelope.ExecutionPayload.MarshalSSZ(w)
-	if err != nil {
-		return 0, err
+	if _, err := w.Write([]byte{flag}); err != nil {
+		return 0, fmt.Errorf("write endOfSequencing: %w", err)
 	}
+	n = 1
 
-	return hashSize + payloadSize, nil
+	m, err := w.Write(envelope.ParentBeaconBlockRoot[:])
+	if err != nil || m != common.HashLength {
+		return n, errors.New("write parentBeaconBlockRoot failed")
+	}
+	n += m
+
+	// write payload
+	m, err = envelope.ExecutionPayload.MarshalSSZ(w)
+	return n + m, err
 }

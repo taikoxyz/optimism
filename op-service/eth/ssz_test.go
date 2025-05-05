@@ -440,6 +440,16 @@ func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 	validInput.ExecutionPayload.ExcessBlobGas = (*Uint64Quantity)(&zero)
 	validInput.ExecutionPayload.BlobGasUsed = (*Uint64Quantity)(&zero)
 
+	endOfSequencing := true
+	validInputWithEndOfSequencingMarker := &ExecutionPayloadEnvelope{
+		ParentBeaconBlockRoot: &hash,
+		ExecutionPayload:      createPayloadWithWithdrawals(&types.Withdrawals{}),
+		EndOfSequencing:       &endOfSequencing,
+	}
+
+	validInputWithEndOfSequencingMarker.ExecutionPayload.ExcessBlobGas = (*Uint64Quantity)(&zero)
+	validInputWithEndOfSequencingMarker.ExecutionPayload.BlobGasUsed = (*Uint64Quantity)(&zero)
+
 	missingHash := &ExecutionPayloadEnvelope{
 		ParentBeaconBlockRoot: nil,
 		ExecutionPayload:      createPayloadWithWithdrawals(&types.Withdrawals{}),
@@ -450,14 +460,18 @@ func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 		ExecutionPayload:      nil,
 	}
 
+	wantEndOfSequencing := true
+
 	tests := []struct {
-		name  string
-		input *ExecutionPayloadEnvelope
-		err   error
+		name                string
+		input               *ExecutionPayloadEnvelope
+		wantEndOfSequencing *bool
+		err                 error
 	}{
-		{"ValidInputSucceeds", validInput, nil},
-		{"MissingHashFailsToSerialize", missingHash, ErrMissingData},
-		{"MissingExecutionDataFailsToSerialize", missingExecutionPayload, ErrMissingData},
+		{"ValidInputSucceeds", validInput, nil, nil},
+		{"ValidInputSucceedsWithEndOfSequencingMarker", validInputWithEndOfSequencingMarker, &wantEndOfSequencing, nil},
+		{"MissingHashFailsToSerialize", missingHash, nil, ErrMissingData},
+		{"MissingExecutionDataFailsToSerialize", missingExecutionPayload, nil, ErrMissingData},
 	}
 
 	for _, test := range tests {
@@ -485,6 +499,8 @@ func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 
 			require.NotNil(t, output.ParentBeaconBlockRoot)
 			assert.Equal(t, hash, *output.ParentBeaconBlockRoot)
+
+			assert.Equal(t, test.wantEndOfSequencing, output.EndOfSequencing)
 
 			require.NotNil(t, output.ExecutionPayload)
 			if diff := cmp.Diff(*test.input.ExecutionPayload, *output.ExecutionPayload); diff != "" {
