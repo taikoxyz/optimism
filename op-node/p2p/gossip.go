@@ -882,8 +882,8 @@ type GossipOut interface {
 	GossipTopicInfo
 	PublishL2Payload(ctx context.Context, msg *eth.ExecutionPayloadEnvelope, signer Signer) error
 	PublishL2RequestResponse(ctx context.Context, msg *eth.ExecutionPayloadEnvelope, signer Signer) error
-	PublishL2Request(ctx context.Context, hash common.Hash) error
-	PublishL2EndOfSequencingRequest(ctx context.Context, epoch uint64) error
+	PublishL2Request(ctx context.Context, hash common.Hash) error            // TODO: add signer, sign request
+	PublishL2EndOfSequencingRequest(ctx context.Context, epoch uint64) error // TODO: add signer, sign request
 	Close() error
 }
 
