@@ -94,8 +94,8 @@ func (m *mockGossipIn) OnUnsafeL2Request(ctx context.Context, from peer.ID, hash
 }
 
 func (m *mockGossipIn) OnUnsafeL2Response(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error {
-	if m.OnUnsafeL2PayloadFn != nil {
-		return m.OnUnsafeL2PayloadFn(ctx, from, msg)
+	if m.OnUnsafeL2ResponseFn != nil {
+		return m.OnUnsafeL2ResponseFn(ctx, from, msg)
 	}
 	return nil
 }
