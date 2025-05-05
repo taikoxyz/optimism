@@ -87,15 +87,15 @@ func (m *mockGossipIn) OnUnsafeL2Payload(ctx context.Context, from peer.ID, msg 
 }
 
 func (m *mockGossipIn) OnUnsafeL2Request(ctx context.Context, from peer.ID, hash common.Hash) error {
-	if m.OnUnsafeL2PayloadFn != nil {
+	if m.OnUnsafeL2RequestFn != nil {
 		return m.OnUnsafeL2RequestFn(ctx, from, hash)
 	}
 	return nil
 }
 
 func (m *mockGossipIn) OnUnsafeL2Response(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error {
-	if m.OnUnsafeL2PayloadFn != nil {
-		return m.OnUnsafeL2PayloadFn(ctx, from, msg)
+	if m.OnUnsafeL2ResponseFn != nil {
+		return m.OnUnsafeL2ResponseFn(ctx, from, msg)
 	}
 	return nil
 }

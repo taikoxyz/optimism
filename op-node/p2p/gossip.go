@@ -98,6 +98,7 @@ func preconfBlocksEndOfSequencingRequestTopic(cfg *rollup.Config) string {
 	return fmt.Sprintf("/taiko/%s/0/requestEndOfSequencingPreconfBlocks", cfg.L2ChainID.String())
 }
 
+// CHANGE(taiko): create preconf blocks topic.
 func preconfBlocksResponseTopic(cfg *rollup.Config) string {
 	return fmt.Sprintf("/taiko/%s/0/responsePreconfBlocks", cfg.L2ChainID.String())
 }
@@ -250,28 +251,6 @@ func guardGossipValidator(log log.Logger, fn pubsub.ValidatorEx) pubsub.Validato
 	}
 }
 
-type seenHashes struct {
-	sync.Mutex
-	blockHashes map[common.Hash]uint64
-}
-
-func (sb *seenHashes) numSeen(h common.Hash) (count uint64, hasSeen bool) {
-	sb.Lock()
-	defer sb.Unlock()
-	count, hasSeen = sb.blockHashes[h]
-	return
-}
-
-func (sb *seenHashes) markSeen(h common.Hash) {
-	sb.Lock()
-	defer sb.Unlock()
-	if _, ok := sb.blockHashes[h]; !ok {
-		sb.blockHashes[h] = 1
-	} else {
-		sb.blockHashes[h]++
-	}
-}
-
 type seenBlocks struct {
 	sync.Mutex
 	blockHashes []common.Hash
@@ -296,11 +275,13 @@ func (sb *seenBlocks) markSeen(h common.Hash) {
 	sb.blockHashes = append(sb.blockHashes, h)
 }
 
+// CHANGE(taiko): add seenEpochs cache.
 type seenEpochs struct {
 	sync.Mutex
 	epochs map[uint64]uint64
 }
 
+// CHANGE(taiko): hasSeen checks if the epoch has been marked as seen, and how many have been seen.
 func (se *seenEpochs) numSeen(epoch uint64) (count uint64, hasSeen bool) {
 	se.Lock()
 	defer se.Unlock()
@@ -308,6 +289,7 @@ func (se *seenEpochs) numSeen(epoch uint64) (count uint64, hasSeen bool) {
 	return
 }
 
+// CHANGE(taiko): markSeen marks epoch as seen
 func (se *seenEpochs) markSeen(epoch uint64) {
 	se.Lock()
 	defer se.Unlock()
@@ -315,6 +297,31 @@ func (se *seenEpochs) markSeen(epoch uint64) {
 		se.epochs[epoch] = 1
 	} else {
 		se.epochs[epoch]++
+	}
+}
+
+// CHANGE(taiko): add seenHashes cache.
+type seenHashes struct {
+	sync.Mutex
+	blockHashes map[common.Hash]uint64
+}
+
+// CHANGE(taiko): hasSeen checks if the hash has been marked as seen, and how many have been seen.
+func (sh *seenHashes) numSeen(h common.Hash) (count uint64, hasSeen bool) {
+	sh.Lock()
+	defer sh.Unlock()
+	count, hasSeen = sh.blockHashes[h]
+	return
+}
+
+// CHANGE(taiko): markSeen marks the block hash as seen
+func (sh *seenHashes) markSeen(h common.Hash) {
+	sh.Lock()
+	defer sh.Unlock()
+	if _, ok := sh.blockHashes[h]; !ok {
+		sh.blockHashes[h] = 1
+	} else {
+		sh.blockHashes[h]++
 	}
 }
 
@@ -1002,9 +1009,7 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 }
 
 func (p *publisher) PublishL2Request(ctx context.Context, hash common.Hash) error {
-	data := hash.Bytes()
-
-	return p.preconfBlocksRequest.topic.Publish(ctx, data)
+	return p.preconfBlocksRequest.topic.Publish(ctx, hash.Bytes())
 }
 
 func (p *publisher) PublishL2EndOfSequencingRequest(ctx context.Context) error {
@@ -1023,11 +1028,11 @@ func (p *publisher) PublishL2RequestResponse(ctx context.Context, envelope *eth.
 
 	if envelope.ParentBeaconBlockRoot != nil {
 		if _, err := envelope.MarshalSSZ(buf); err != nil {
-			return fmt.Errorf("failed to encoded execution payload envelope to publish: %w", err)
+			return fmt.Errorf("failed to encode execution payload envelope to publish: %w", err)
 		}
 	} else {
 		if _, err := envelope.ExecutionPayload.MarshalSSZ(buf); err != nil {
-			return fmt.Errorf("failed to encoded execution payload to publish: %w", err)
+			return fmt.Errorf("failed to encode execution payload to publish: %w", err)
 		}
 	}
 
