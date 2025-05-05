@@ -883,7 +883,7 @@ type GossipOut interface {
 	PublishL2Payload(ctx context.Context, msg *eth.ExecutionPayloadEnvelope, signer Signer) error
 	PublishL2RequestResponse(ctx context.Context, msg *eth.ExecutionPayloadEnvelope, signer Signer) error
 	PublishL2Request(ctx context.Context, hash common.Hash) error
-	PublishL2EndOfSequencingRequest(ctx context.Context) error
+	PublishL2EndOfSequencingRequest(ctx context.Context, epoch uint64) error
 	Close() error
 }
 
@@ -1012,8 +1012,12 @@ func (p *publisher) PublishL2Request(ctx context.Context, hash common.Hash) erro
 	return p.preconfBlocksRequest.topic.Publish(ctx, hash.Bytes())
 }
 
-func (p *publisher) PublishL2EndOfSequencingRequest(ctx context.Context) error {
-	return p.preconfBlocksEndOfSequencingRequest.topic.Publish(ctx, nil)
+func (p *publisher) PublishL2EndOfSequencingRequest(ctx context.Context, epoch uint64) error {
+	// convert epoch to bytes
+	epochBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(epochBytes, epoch)
+
+	return p.preconfBlocksEndOfSequencingRequest.topic.Publish(ctx, epochBytes)
 }
 
 func (p *publisher) PublishL2RequestResponse(ctx context.Context, envelope *eth.ExecutionPayloadEnvelope, signer Signer) error {
