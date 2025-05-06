@@ -371,13 +371,12 @@ func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg Goss
 			return result
 		}
 
-		var pl eth.ExecutionPayload
-		if err := pl.UnmarshalSSZ(blockVersion, uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
+		var envelope eth.ExecutionPayloadEnvelope
+		// hdr = 1 byte flag + 32 byte root, then payload
+		if err := envelope.UnmarshalSSZ(uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
 			log.Warn("invalid envelope payload", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
-
-		envelope := eth.ExecutionPayloadEnvelope{ExecutionPayload: &pl}
 
 		payload := envelope.ExecutionPayload
 
@@ -476,13 +475,12 @@ func BuildPreconfBlocksResponseValidator(log log.Logger, cfg *rollup.Config, run
 			return result
 		}
 
-		var pl eth.ExecutionPayload
-		if err := pl.UnmarshalSSZ(blockVersion, uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
+		// decode full envelope (1B flag + 32B root + payload…)
+		var envelope eth.ExecutionPayloadEnvelope
+		if err := envelope.UnmarshalSSZ(uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
 			log.Warn("invalid envelope payload", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
-
-		envelope := eth.ExecutionPayloadEnvelope{ExecutionPayload: &pl}
 
 		payload := envelope.ExecutionPayload
 
@@ -967,14 +965,9 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 
 	buf.Write(make([]byte, 65))
 
-	if envelope.ParentBeaconBlockRoot != nil {
-		if _, err := envelope.MarshalSSZ(buf); err != nil {
-			return fmt.Errorf("failed to encoded execution payload envelope to publish: %w", err)
-		}
-	} else {
-		if _, err := envelope.ExecutionPayload.MarshalSSZ(buf); err != nil {
-			return fmt.Errorf("failed to encoded execution payload to publish: %w", err)
-		}
+	// change(taiko): always emit the full envelope (flag + root placeholder + payload)
+	if _, err := envelope.MarshalSSZ(buf); err != nil {
+		return fmt.Errorf("failed to encode execution payload envelope to publish: %w", err)
 	}
 
 	data := buf.Bytes()
@@ -1025,14 +1018,9 @@ func (p *publisher) PublishL2RequestResponse(ctx context.Context, envelope *eth.
 
 	buf.Write(make([]byte, 65))
 
-	if envelope.ParentBeaconBlockRoot != nil {
-		if _, err := envelope.MarshalSSZ(buf); err != nil {
-			return fmt.Errorf("failed to encode execution payload envelope to publish: %w", err)
-		}
-	} else {
-		if _, err := envelope.ExecutionPayload.MarshalSSZ(buf); err != nil {
-			return fmt.Errorf("failed to encode execution payload to publish: %w", err)
-		}
+	// change(taiko): always emit the full envelope (flag + root placeholder + payload)
+	if _, err := envelope.MarshalSSZ(buf); err != nil {
+		return fmt.Errorf("failed to encode execution payload envelope to publish: %w", err)
 	}
 
 	data := buf.Bytes()

@@ -476,7 +476,8 @@ func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader
 // MarshalSSZ writes 1B flag + 32B root + payload…
 func (envelope *ExecutionPayloadEnvelope) MarshalSSZ(w io.Writer) (n int, err error) {
 	// EndOfSequencing is optional, allow to be nil.
-	if envelope.ExecutionPayload == nil || envelope.ParentBeaconBlockRoot == nil {
+	// change(taiko): use placeholder root
+	if envelope.ExecutionPayload == nil {
 		return 0, ErrMissingData
 	}
 
@@ -489,7 +490,13 @@ func (envelope *ExecutionPayloadEnvelope) MarshalSSZ(w io.Writer) (n int, err er
 	}
 	n = 1
 
-	m, err := w.Write(envelope.ParentBeaconBlockRoot[:])
+	// change(taiko): allow parent beacon block root to be unset, use default
+	// Write 32B beacon-root (zero if unset)
+	var root common.Hash
+	if envelope.ParentBeaconBlockRoot != nil {
+		root = *envelope.ParentBeaconBlockRoot
+	}
+	m, err := w.Write(root[:])
 	if err != nil || m != common.HashLength {
 		return n, errors.New("write parentBeaconBlockRoot failed")
 	}
