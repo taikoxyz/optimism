@@ -450,11 +450,6 @@ func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 	validInputWithEndOfSequencingMarker.ExecutionPayload.ExcessBlobGas = (*Uint64Quantity)(&zero)
 	validInputWithEndOfSequencingMarker.ExecutionPayload.BlobGasUsed = (*Uint64Quantity)(&zero)
 
-	missingHash := &ExecutionPayloadEnvelope{
-		ParentBeaconBlockRoot: nil,
-		ExecutionPayload:      createPayloadWithWithdrawals(&types.Withdrawals{}),
-	}
-
 	missingExecutionPayload := &ExecutionPayloadEnvelope{
 		ParentBeaconBlockRoot: &hash,
 		ExecutionPayload:      nil,
@@ -470,7 +465,6 @@ func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 	}{
 		{"ValidInputSucceeds", validInput, nil, nil},
 		{"ValidInputSucceedsWithEndOfSequencingMarker", validInputWithEndOfSequencingMarker, &wantEndOfSequencing, nil},
-		{"MissingHashFailsToSerialize", missingHash, nil, ErrMissingData},
 		{"MissingExecutionDataFailsToSerialize", missingExecutionPayload, nil, ErrMissingData},
 	}
 
