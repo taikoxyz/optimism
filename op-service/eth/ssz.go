@@ -464,7 +464,7 @@ func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader
 
 	payloadScope := scope - hdr
 	payload := new(ExecutionPayload)
-	if err := payload.UnmarshalSSZ(BlockV3, payloadScope, r); err != nil {
+	if err := payload.UnmarshalSSZ(BlockV1, payloadScope, r); err != nil {
 		return err
 	}
 	envelope.ExecutionPayload = payload
