@@ -13,9 +13,9 @@ import (
 type FnTracer struct {
 	OnNewL1HeadFn                      func(ctx context.Context, sig eth.L1BlockRef)
 	OnUnsafeL2PayloadFn                func(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope)
-	OnUnsafeL2ResponseFn               func(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope)
-	OnUnsafeL2RequestFn                func(ctx context.Context, from peer.ID, hash common.Hash)
-	OnUnsafeL2EndOfSequencingRequestFn func(ctx context.Context, from peer.ID, epoch uint64)
+	OnUnsafeL2ResponseFn               func(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope) // CHANGE(taiko): add handler
+	OnUnsafeL2RequestFn                func(ctx context.Context, from peer.ID, hash common.Hash)                      // CHANGE(taiko): add handler
+	OnUnsafeL2EndOfSequencingRequestFn func(ctx context.Context, from peer.ID, epoch uint64)                          // CHANGE(taiko): add handler
 	OnPublishL2PayloadFn               func(ctx context.Context, payload *eth.ExecutionPayloadEnvelope)
 }
 
