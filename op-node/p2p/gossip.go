@@ -283,7 +283,7 @@ type seenEpochs struct {
 	epochs map[uint64]uint64
 }
 
-// CHANGE(taiko): hasSeen checks if the epoch has been marked as seen, and how many have been seen.
+// CHANGE(taiko): numSeen checks if the epoch has been marked as seen, and how many have been seen.
 func (se *seenEpochs) numSeen(epoch uint64) (count uint64, hasSeen bool) {
 	se.Lock()
 	defer se.Unlock()
@@ -308,7 +308,7 @@ type seenHashes struct {
 	blockHashes map[common.Hash]uint64
 }
 
-// CHANGE(taiko): hasSeen checks if the hash has been marked as seen, and how many have been seen.
+// CHANGE(taiko): numSeen checks if the hash has been marked as seen, and how many have been seen.
 func (sh *seenHashes) numSeen(h common.Hash) (count uint64, hasSeen bool) {
 	sh.Lock()
 	defer sh.Unlock()

@@ -442,7 +442,7 @@ func unmarshalTransactions(in []byte) (txs []Data, err error) {
 func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader) error {
 	const hdr = 1 + common.HashLength
 	if scope < hdr {
-		return fmt.Errorf("scope too small: %d", scope)
+		return fmt.Errorf("scope too small: %d, must be at least %d (1 + common.HashLength)", scope, hdr)
 	}
 
 	var flag [1]byte
