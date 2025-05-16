@@ -75,9 +75,9 @@ func TestP2PSimple(t *testing.T) {
 
 type mockGossipIn struct {
 	OnUnsafeL2PayloadFn                func(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error
-	OnUnsafeL2RequestFn                func(ctx context.Context, from peer.ID, hash common.Hash) error
-	OnUnsafeL2ResponseFn               func(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error
-	OnUnsafeL2EndOfSequencingRequestFn func(ctx context.Context, from peer.ID, epoch uint64) error
+	OnUnsafeL2RequestFn                func(ctx context.Context, from peer.ID, hash common.Hash) error                  // CHANGE(taiko): add handlers
+	OnUnsafeL2ResponseFn               func(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error // CHANGE(taiko): add handlers
+	OnUnsafeL2EndOfSequencingRequestFn func(ctx context.Context, from peer.ID, epoch uint64) error                      // CHANGE(taiko): add handlers
 }
 
 func (m *mockGossipIn) OnUnsafeL2Payload(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error {
@@ -87,6 +87,7 @@ func (m *mockGossipIn) OnUnsafeL2Payload(ctx context.Context, from peer.ID, msg 
 	return nil
 }
 
+// CHANGE(taiko): add handlers to implement GossipIn
 func (m *mockGossipIn) OnUnsafeL2Request(ctx context.Context, from peer.ID, hash common.Hash) error {
 	if m.OnUnsafeL2RequestFn != nil {
 		return m.OnUnsafeL2RequestFn(ctx, from, hash)
@@ -94,6 +95,7 @@ func (m *mockGossipIn) OnUnsafeL2Request(ctx context.Context, from peer.ID, hash
 	return nil
 }
 
+// CHANGE(taiko): add handlers to implement GossipIn
 func (m *mockGossipIn) OnUnsafeL2Response(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error {
 	if m.OnUnsafeL2ResponseFn != nil {
 		return m.OnUnsafeL2ResponseFn(ctx, from, msg)
@@ -101,6 +103,7 @@ func (m *mockGossipIn) OnUnsafeL2Response(ctx context.Context, from peer.ID, msg
 	return nil
 }
 
+// CHANGE(taiko): add handlers to implement GossipIn
 func (m *mockGossipIn) OnUnsafeL2EndOfSequencingRequest(ctx context.Context, from peer.ID, epoch uint64) error {
 	if m.OnUnsafeL2EndOfSequencingRequestFn != nil {
 		return m.OnUnsafeL2EndOfSequencingRequestFn(ctx, from, epoch)

@@ -445,6 +445,7 @@ func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader
 		return fmt.Errorf("scope too small: %d, must be at least %d (1 + common.HashLength)", scope, hdr)
 	}
 
+	// CHANGE(taiko0: read the flag for EndOfSequencing)
 	var flag [1]byte
 	if _, err := io.ReadFull(r, flag[:]); err != nil {
 		return fmt.Errorf("read endOfSequencing: %w", err)
@@ -456,6 +457,7 @@ func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader
 		envelope.EndOfSequencing = nil
 	}
 
+	// CHANGE(taiko): always read the parent beacon block root, default to zero
 	var root common.Hash
 	if _, err := io.ReadFull(r, root[:]); err != nil {
 		return fmt.Errorf("read parentBeaconBlockRoot: %w", err)
@@ -476,11 +478,12 @@ func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader
 // MarshalSSZ writes 1B flag + 32B root + payload…
 func (envelope *ExecutionPayloadEnvelope) MarshalSSZ(w io.Writer) (n int, err error) {
 	// EndOfSequencing is optional, allow to be nil.
-	// change(taiko): use placeholder root
+	// change(taiko): use placeholder root, allow BeaconBlockRoot to be unset
 	if envelope.ExecutionPayload == nil {
 		return 0, ErrMissingData
 	}
 
+	// CHANGE(taiko): write the flag for EndOfSequencing
 	flag := byte(0)
 	if envelope.EndOfSequencing != nil && *envelope.EndOfSequencing {
 		flag = 1

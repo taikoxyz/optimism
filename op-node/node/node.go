@@ -637,6 +637,7 @@ func (n *OpNode) OnUnsafeL2Payload(ctx context.Context, from peer.ID, envelope *
 	return nil
 }
 
+// CHANGE(taiko): add OnUnsafeL2Request
 func (n *OpNode) OnUnsafeL2Request(ctx context.Context, from peer.ID, hash common.Hash) error {
 	// ignore if it's from ourselves
 	if p2pNode := n.getP2PNodeIfEnabled(); p2pNode != nil && from == p2pNode.Host().ID() {
@@ -658,6 +659,7 @@ func (n *OpNode) OnUnsafeL2Request(ctx context.Context, from peer.ID, hash commo
 	return nil
 }
 
+// CHANGE(taiko): add OnUnsafeL2EndOfSequencingRequest
 func (n *OpNode) OnUnsafeL2EndOfSequencingRequest(ctx context.Context, from peer.ID, epoch uint64) error {
 	// ignore if it's from ourselves
 	if p2pNode := n.getP2PNodeIfEnabled(); p2pNode != nil && from == p2pNode.Host().ID() {
@@ -679,6 +681,7 @@ func (n *OpNode) OnUnsafeL2EndOfSequencingRequest(ctx context.Context, from peer
 	return nil
 }
 
+// CHANGE (taiko): add OnUnsafeL2Response
 func (n *OpNode) OnUnsafeL2Response(ctx context.Context, from peer.ID, envelope *eth.ExecutionPayloadEnvelope) error {
 	// ignore if it's from ourselves
 	if p2pNode := n.getP2PNodeIfEnabled(); p2pNode != nil && from == p2pNode.Host().ID() {

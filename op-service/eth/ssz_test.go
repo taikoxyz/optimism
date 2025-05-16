@@ -437,9 +437,11 @@ func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 		ParentBeaconBlockRoot: &hash,
 		ExecutionPayload:      createPayloadWithWithdrawals(&types.Withdrawals{}),
 	}
+
 	validInput.ExecutionPayload.ExcessBlobGas = (*Uint64Quantity)(&zero)
 	validInput.ExecutionPayload.BlobGasUsed = (*Uint64Quantity)(&zero)
 
+	// CHANGE(taiko): add EndOfSequencing marker for test
 	endOfSequencing := true
 	validInputWithEndOfSequencingMarker := &ExecutionPayloadEnvelope{
 		ParentBeaconBlockRoot: &hash,
@@ -464,7 +466,7 @@ func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 		err                 error
 	}{
 		{"ValidInputSucceeds", validInput, nil, nil},
-		{"ValidInputSucceedsWithEndOfSequencingMarker", validInputWithEndOfSequencingMarker, &wantEndOfSequencing, nil},
+		{"ValidInputSucceedsWithEndOfSequencingMarker", validInputWithEndOfSequencingMarker, &wantEndOfSequencing, nil}, // CHANGE(taiko): add test for EOS marker
 		{"MissingExecutionDataFailsToSerialize", missingExecutionPayload, nil, ErrMissingData},
 	}
 
@@ -494,6 +496,7 @@ func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 			require.NotNil(t, output.ParentBeaconBlockRoot)
 			assert.Equal(t, hash, *output.ParentBeaconBlockRoot)
 
+			// CHANGE(taiko): assertion for EOS
 			assert.Equal(t, test.wantEndOfSequencing, output.EndOfSequencing)
 
 			require.NotNil(t, output.ExecutionPayload)

@@ -204,7 +204,7 @@ type (
 )
 
 type ExecutionPayloadEnvelope struct {
-	EndOfSequencing       *bool             `json:"endOfSequencing,omitempty"`
+	EndOfSequencing       *bool             `json:"endOfSequencing,omitempty"` // CHANGE(taiko): add EOS marker
 	ParentBeaconBlockRoot *common.Hash      `json:"parentBeaconBlockRoot,omitempty"`
 	ExecutionPayload      *ExecutionPayload `json:"executionPayload"`
 }
