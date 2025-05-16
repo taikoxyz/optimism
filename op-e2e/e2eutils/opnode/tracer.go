@@ -11,11 +11,12 @@ import (
 )
 
 type FnTracer struct {
-	OnNewL1HeadFn        func(ctx context.Context, sig eth.L1BlockRef)
-	OnUnsafeL2PayloadFn  func(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope)
-	OnUnsafeL2ResponseFn func(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope)
-	OnUnsafeL2RequestFn  func(ctx context.Context, from peer.ID, hash common.Hash)
-	OnPublishL2PayloadFn func(ctx context.Context, payload *eth.ExecutionPayloadEnvelope)
+	OnNewL1HeadFn                      func(ctx context.Context, sig eth.L1BlockRef)
+	OnUnsafeL2PayloadFn                func(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope)
+	OnUnsafeL2ResponseFn               func(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope)
+	OnUnsafeL2RequestFn                func(ctx context.Context, from peer.ID, hash common.Hash)
+	OnUnsafeL2EndOfSequencingRequestFn func(ctx context.Context, from peer.ID, epoch uint64)
+	OnPublishL2PayloadFn               func(ctx context.Context, payload *eth.ExecutionPayloadEnvelope)
 }
 
 func (n *FnTracer) OnNewL1Head(ctx context.Context, sig eth.L1BlockRef) {
@@ -41,6 +42,13 @@ func (n *FnTracer) OnUnsafeL2Request(ctx context.Context, from peer.ID, hash com
 func (n *FnTracer) OnUnsafeL2Response(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope) {
 	if n.OnUnsafeL2ResponseFn != nil {
 		n.OnUnsafeL2ResponseFn(ctx, from, payload)
+	}
+}
+
+// CHANGE(taiko): add OnUnsafeL2EndOfSequencingRequest handler
+func (n *FnTracer) OnUnsafeL2EndOfSequencingRequest(ctx context.Context, from peer.ID, epoch uint64) {
+	if n.OnUnsafeL2EndOfSequencingRequestFn != nil {
+		n.OnUnsafeL2EndOfSequencingRequestFn(ctx, from, epoch)
 	}
 }
 

@@ -13,8 +13,9 @@ import (
 type Tracer interface {
 	OnNewL1Head(ctx context.Context, sig eth.L1BlockRef)
 	OnUnsafeL2Payload(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope)
-	OnUnsafeL2Request(ctx context.Context, from peer.ID, hash common.Hash)
-	OnUnsafeL2Response(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope)
+	OnUnsafeL2Request(ctx context.Context, from peer.ID, hash common.Hash)                       // CHANGE(taiko): add OnUnsafeL2Request handler
+	OnUnsafeL2Response(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope) // CHANGE(taiko): add OnUnsafeL2Response handler
+	OnUnsafeL2EndOfSequencingRequest(ctx context.Context, from peer.ID, epoch uint64)            // CHANGE(taiko): add OnUnsafeL2EndOfSequencingRequest handler
 	OnPublishL2Payload(ctx context.Context, payload *eth.ExecutionPayloadEnvelope)
 }
 
@@ -30,6 +31,10 @@ func (n noOpTracer) OnUnsafeL2Request(ctx context.Context, from peer.ID, hash co
 
 // CHANGE(taiko): add OnUnsafeL2Response handler
 func (n noOpTracer) OnUnsafeL2Response(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope) {
+}
+
+// CHANGE(taiko); add OnUnsafeL2EndOfSequencingRequest handler
+func (n noOpTracer) OnUnsafeL2EndOfSequencingRequest(ctx context.Context, from peer.ID, epoch uint64) {
 }
 
 func (n noOpTracer) OnPublishL2Payload(ctx context.Context, payload *eth.ExecutionPayloadEnvelope) {}

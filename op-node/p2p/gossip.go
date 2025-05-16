@@ -44,6 +44,8 @@ const (
 	DefaultMeshDlazy = 6  // gossip target
 	// peerScoreInspectFrequency is the frequency at which peer scores are inspected
 	peerScoreInspectFrequency = 15 * time.Second
+	defaultBufferSize         = 768  // CHANGE(taiko): change sizes to contants
+	defaultLRUCacheSize       = 1000 // CHANGE(taiko): change sizes to contants
 )
 
 // Message domains, the msg id function uncompresses to keep data monomorphic,
@@ -181,7 +183,7 @@ func BuildGlobalGossipParams(cfg *rollup.Config) pubsub.GossipSubParams {
 	params.Dlazy = DefaultMeshDlazy            // gossip target
 	params.HeartbeatInterval = gossipHeartbeat // interval of heartbeat
 	params.FanoutTTL = 24 * time.Second        // ttl for fanout maps for topics we are not subscribed to but have published to
-	params.HistoryLength = 5                   // number of windows to retain full messages in cache for IWANT responses
+	params.HistoryLength = 12                  // number of windows to retain full messages in cache for IWANT responses
 	params.HistoryGossip = 3                   // number of windows to gossip about
 
 	return params
@@ -329,7 +331,7 @@ func (sh *seenHashes) markSeen(h common.Hash) {
 func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig, blockVersion eth.BlockVersion) pubsub.ValidatorEx {
 	// Seen block hashes per block height
 	// uint64 -> *seenBlocks
-	preconfblockLRU, err := lru.New[uint64, *seenBlocks](1000)
+	preconfblockLRU, err := lru.New[uint64, *seenBlocks](defaultLRUCacheSize)
 	if err != nil {
 		panic(fmt.Errorf("failed to set up block height LRU cache: %w", err))
 	}
@@ -433,7 +435,7 @@ func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg Goss
 func BuildPreconfBlocksResponseValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig, blockVersion eth.BlockVersion) pubsub.ValidatorEx {
 	// Seen block hashes per block height
 	// uint64 -> *seenBlocks
-	preconfblockLRU, err := lru.New[uint64, *seenBlocks](1000)
+	preconfblockLRU, err := lru.New[uint64, *seenBlocks](defaultLRUCacheSize)
 	if err != nil {
 		panic(fmt.Errorf("failed to set up block height LRU cache: %w", err))
 	}
@@ -534,7 +536,7 @@ func BuildPreconfBlocksResponseValidator(log log.Logger, cfg *rollup.Config, run
 func BuildPreconfBlocksRequestValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig) pubsub.ValidatorEx {
 	// Seen block hashes per block height
 	// uint64 -> *seenBlocks
-	hashLRU, err := lru.New[common.Hash, *seenHashes](1000)
+	hashLRU, err := lru.New[common.Hash, *seenHashes](defaultLRUCacheSize)
 	if err != nil {
 		panic(fmt.Errorf("failed to set up block height LRU cache: %w", err))
 	}
@@ -564,7 +566,7 @@ func BuildPreconfBlocksRequestValidator(log log.Logger, cfg *rollup.Config, runC
 func BuildPreconfBlocksEndOfSequencingRequestValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig) pubsub.ValidatorEx {
 	// Seen block hashes per block height
 	// uint64 -> *seenBlocks
-	epochLRU, err := lru.New[uint64, *seenEpochs](1000)
+	epochLRU, err := lru.New[uint64, *seenEpochs](defaultLRUCacheSize)
 	if err != nil {
 		panic(fmt.Errorf("failed to set up epoch LRU cache: %w", err))
 	}
@@ -595,7 +597,7 @@ func BuildPreconfBlocksEndOfSequencingRequestValidator(log log.Logger, cfg *roll
 func BuildBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig, blockVersion eth.BlockVersion) pubsub.ValidatorEx {
 	// Seen block hashes per block height
 	// uint64 -> *seenBlocks
-	blockHeightLRU, err := lru.New[uint64, *seenBlocks](1000)
+	blockHeightLRU, err := lru.New[uint64, *seenBlocks](defaultLRUCacheSize) // CHANGE(taiko): change sizes to contants
 	if err != nil {
 		panic(fmt.Errorf("failed to set up block height LRU cache: %w", err))
 	}
@@ -1145,7 +1147,7 @@ func newRequestTopic(ctx context.Context, topicId string, ps *pubsub.PubSub, log
 
 	go LogTopicEvents(ctx, log, blocksTopicEvents)
 
-	subscription, err := topic.Subscribe(pubsub.WithBufferSize(768))
+	subscription, err := topic.Subscribe(pubsub.WithBufferSize(defaultBufferSize))
 	if err != nil {
 		err = errors.Join(err, topic.Close())
 		return nil, fmt.Errorf("failed to subscribe to blocks gossip topic: %w", err)
@@ -1183,7 +1185,7 @@ func newEndOfSequencingRequestTopic(ctx context.Context, topicId string, ps *pub
 
 	go LogTopicEvents(ctx, log, blocksTopicEvents)
 
-	subscription, err := topic.Subscribe(pubsub.WithBufferSize(768))
+	subscription, err := topic.Subscribe(pubsub.WithBufferSize(defaultBufferSize))
 	if err != nil {
 		err = errors.Join(err, topic.Close())
 		return nil, fmt.Errorf("failed to subscribe to blocks gossip topic: %w", err)
@@ -1221,7 +1223,7 @@ func newBlockTopic(ctx context.Context, topicId string, ps *pubsub.PubSub, log l
 
 	go LogTopicEvents(ctx, log, blocksTopicEvents)
 
-	subscription, err := blocksTopic.Subscribe(pubsub.WithBufferSize(768)) // CHANGE(taiko): change buffer size to `maxBlocksPerBatch`
+	subscription, err := blocksTopic.Subscribe(pubsub.WithBufferSize(defaultBufferSize)) // CHANGE(taiko): change buffer size to defaultBufferSize
 	if err != nil {
 		err = errors.Join(err, blocksTopic.Close())
 		return nil, fmt.Errorf("failed to subscribe to blocks gossip topic: %w", err)

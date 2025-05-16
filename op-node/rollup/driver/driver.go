@@ -249,25 +249,28 @@ func NewDriver(
 
 	driverEmitter := sys.Register("driver", nil, opts)
 	driver := &Driver{
-		statusTracker:    statusTracker,
-		SyncDeriver:      syncDeriver,
-		sched:            schedDeriv,
-		emitter:          driverEmitter,
-		drain:            drain.Drain,
-		stateReq:         make(chan chan struct{}),
-		forceReset:       make(chan chan struct{}, 10),
-		driverConfig:     driverCfg,
-		driverCtx:        driverCtx,
-		driverCancel:     driverCancel,
-		log:              log,
-		sequencer:        sequencer,
-		network:          network,
-		metrics:          metrics,
-		l1HeadSig:        make(chan eth.L1BlockRef, 10),
-		l1SafeSig:        make(chan eth.L1BlockRef, 10),
-		l1FinalizedSig:   make(chan eth.L1BlockRef, 10),
-		unsafeL2Payloads: make(chan *eth.ExecutionPayloadEnvelope, 10),
-		altSync:          altSync,
+		statusTracker:                   statusTracker,
+		SyncDeriver:                     syncDeriver,
+		sched:                           schedDeriv,
+		emitter:                         driverEmitter,
+		drain:                           drain.Drain,
+		stateReq:                        make(chan chan struct{}),
+		forceReset:                      make(chan chan struct{}, 10),
+		driverConfig:                    driverCfg,
+		driverCtx:                       driverCtx,
+		driverCancel:                    driverCancel,
+		log:                             log,
+		sequencer:                       sequencer,
+		network:                         network,
+		metrics:                         metrics,
+		l1HeadSig:                       make(chan eth.L1BlockRef, 10),
+		l1SafeSig:                       make(chan eth.L1BlockRef, 10),
+		l1FinalizedSig:                  make(chan eth.L1BlockRef, 10),
+		unsafeL2Payloads:                make(chan *eth.ExecutionPayloadEnvelope, 10),
+		unsafeL2Responses:               make(chan *eth.ExecutionPayloadEnvelope, 10), // CHANGE(taiko): add channel
+		unsafeL2Requests:                make(chan common.Hash, 10),                   // CHANGE(taiko): add channel
+		unsafeL2EndOfSequencingRequests: make(chan uint64, 10),                        // CHANGE(taiko): add channel
+		altSync:                         altSync,
 	}
 
 	return driver
