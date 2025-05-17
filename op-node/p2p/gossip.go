@@ -809,6 +809,7 @@ func verifyBlockSignature(log log.Logger, cfg *rollup.Config, runCfg GossipRunti
 	return pubsub.ValidationAccept
 }
 
+// CHANGE(taiko): verifies the block response signature
 func verifyBlockResponseSignature(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig, id peer.ID, signatureBytes []byte, payloadBytes []byte) pubsub.ValidationResult {
 	signingHash, err := BlockSigningHash(cfg, payloadBytes)
 	if err != nil {
@@ -998,10 +999,12 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 	}
 }
 
+// CHANGE(taiko): publish to preconfBlocksRequest topic
 func (p *publisher) PublishL2Request(ctx context.Context, hash common.Hash) error {
 	return p.preconfBlocksRequest.topic.Publish(ctx, hash.Bytes())
 }
 
+// CHANGE(taiko): publish to preconfBlocksEndOfSequencingRequest topic
 func (p *publisher) PublishL2EndOfSequencingRequest(ctx context.Context, epoch uint64) error {
 	// convert epoch to bytes
 	epochBytes := make([]byte, 8)
@@ -1010,6 +1013,7 @@ func (p *publisher) PublishL2EndOfSequencingRequest(ctx context.Context, epoch u
 	return p.preconfBlocksEndOfSequencingRequest.topic.Publish(ctx, epochBytes)
 }
 
+// CHANGE(taiko): publish to preconfBlocksResponse topic
 func (p *publisher) PublishL2RequestResponse(ctx context.Context, envelope *eth.ExecutionPayloadEnvelope, signer Signer) error {
 	res := msgBufPool.Get().(*[]byte)
 	buf := bytes.NewBuffer((*res)[:0])
@@ -1125,6 +1129,7 @@ func JoinGossip(self peer.ID, ps *pubsub.PubSub, log log.Logger, cfg *rollup.Con
 	}, nil
 }
 
+// CHANGE(taiko): create preconf blocks topic
 func newRequestTopic(ctx context.Context, topicId string, ps *pubsub.PubSub, log log.Logger, gossipIn GossipIn, validator pubsub.ValidatorEx) (*blockTopic, error) {
 	err := ps.RegisterTopicValidator(topicId,
 		validator,
@@ -1163,6 +1168,7 @@ func newRequestTopic(ctx context.Context, topicId string, ps *pubsub.PubSub, log
 	}, nil
 }
 
+// CHANGE(taiko): create preconf blocks end of sequencing request topic
 func newEndOfSequencingRequestTopic(ctx context.Context, topicId string, ps *pubsub.PubSub, log log.Logger, gossipIn GossipIn, validator pubsub.ValidatorEx) (*blockTopic, error) {
 	err := ps.RegisterTopicValidator(topicId,
 		validator,
@@ -1201,6 +1207,7 @@ func newEndOfSequencingRequestTopic(ctx context.Context, topicId string, ps *pub
 	}, nil
 }
 
+// CHANGE(taiko): create preconf blocks response topic
 func newBlockTopic(ctx context.Context, topicId string, ps *pubsub.PubSub, log log.Logger, validator pubsub.ValidatorEx, handlerFunc func(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error) (*blockTopic, error) {
 	err := ps.RegisterTopicValidator(topicId,
 		validator,
@@ -1252,6 +1259,7 @@ func BlocksHandler(onBlock func(ctx context.Context, from peer.ID, msg *eth.Exec
 	}
 }
 
+// CHANGE(taiko): create preconf blocks request handler
 func RequestsHandler(onRequest func(ctx context.Context, from peer.ID, hash common.Hash) error) MessageHandler {
 	return func(ctx context.Context, from peer.ID, msg any) error {
 		payload, ok := msg.(common.Hash)
@@ -1262,6 +1270,7 @@ func RequestsHandler(onRequest func(ctx context.Context, from peer.ID, hash comm
 	}
 }
 
+// CHANGE(taiko): create preconf blocks end of sequencing request handler
 func EndOfSequencingRequestsHandler(onRequest func(ctx context.Context, from peer.ID, epoch uint64) error) MessageHandler {
 	return func(ctx context.Context, from peer.ID, msg any) error {
 		payload, ok := msg.(uint64)
