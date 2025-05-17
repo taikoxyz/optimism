@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"sync"
 	"time"
 
@@ -771,25 +772,10 @@ func verifyBlockSignature(log log.Logger, cfg *rollup.Config, runCfg GossipRunti
 
 	// CHANGE(taiko): check if the signer is in the whitelist.
 	if cfg, ok := runCfg.(PreconfGossipRuntimeConfig); ok {
-		// If there are no configured p2p sequencer addresses, accept the block.
-		// TODO: Remove this check once we have a real whitelist of sequencer addresses.
-		if len(cfg.P2PSequencerAddresses()) == 0 {
-			log.Warn("no configured p2p sequencer addresses", "peer", id, "addr", addr)
+		// If the signer is in the whitelist, accept the block.
+		if slices.Contains(cfg.P2PSequencerAddresses(), addr) {
 			return pubsub.ValidationAccept
 		}
-
-		// If the signer is in the whitelist, accept the block.
-		for _, expected := range cfg.P2PSequencerAddresses() {
-			// If the signer is an empty address, accept the block.
-			// TODO: Remove this check once we have a real whitelist of sequencer addresses.
-			if expected == (common.Address{}) {
-				log.Warn("empty no configured p2p sequencer address", "peer", id, "addr", addr)
-				return pubsub.ValidationAccept
-			} else if addr == expected {
-				return pubsub.ValidationAccept
-			}
-		}
-
 		log.Warn("unexpected block authors", "err", err, "peer", id, "addrs", cfg.P2PSequencerAddresses())
 		return pubsub.ValidationReject
 	}
@@ -830,15 +816,8 @@ func verifyBlockResponseSignature(log log.Logger, cfg *rollup.Config, runCfg Gos
 			return pubsub.ValidationIgnore
 		}
 		// If the signer is in the whitelist, accept the block.
-		for _, expected := range cfg.P2PSequencerAddresses() {
-			// If the signer is an empty address, accept the block.
-			// TODO: Remove this check once we have a real whitelist of sequencer addresses.
-			if expected == (common.Address{}) {
-				log.Warn("empty no configured p2p sequencer address", "peer", id, "addr", addr)
-				return pubsub.ValidationAccept
-			} else if addr == expected {
-				return pubsub.ValidationAccept
-			}
+		if slices.Contains(cfg.P2PSequencerAddresses(), addr) {
+			return pubsub.ValidationAccept
 		}
 
 		log.Warn("unexpected block response authors", "err", err, "peer", id, "addr", cfg.P2PSequencerAddresses())
