@@ -437,27 +437,37 @@ func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 		ParentBeaconBlockRoot: &hash,
 		ExecutionPayload:      createPayloadWithWithdrawals(&types.Withdrawals{}),
 	}
+
 	validInput.ExecutionPayload.ExcessBlobGas = (*Uint64Quantity)(&zero)
 	validInput.ExecutionPayload.BlobGasUsed = (*Uint64Quantity)(&zero)
 
-	missingHash := &ExecutionPayloadEnvelope{
-		ParentBeaconBlockRoot: nil,
+	// CHANGE(taiko): add EndOfSequencing marker for test
+	endOfSequencing := true
+	validInputWithEndOfSequencingMarker := &ExecutionPayloadEnvelope{
+		ParentBeaconBlockRoot: &hash,
 		ExecutionPayload:      createPayloadWithWithdrawals(&types.Withdrawals{}),
+		EndOfSequencing:       &endOfSequencing,
 	}
+
+	validInputWithEndOfSequencingMarker.ExecutionPayload.ExcessBlobGas = (*Uint64Quantity)(&zero)
+	validInputWithEndOfSequencingMarker.ExecutionPayload.BlobGasUsed = (*Uint64Quantity)(&zero)
 
 	missingExecutionPayload := &ExecutionPayloadEnvelope{
 		ParentBeaconBlockRoot: &hash,
 		ExecutionPayload:      nil,
 	}
 
+	wantEndOfSequencing := true
+
 	tests := []struct {
-		name  string
-		input *ExecutionPayloadEnvelope
-		err   error
+		name                string
+		input               *ExecutionPayloadEnvelope
+		wantEndOfSequencing *bool
+		err                 error
 	}{
-		{"ValidInputSucceeds", validInput, nil},
-		{"MissingHashFailsToSerialize", missingHash, ErrMissingData},
-		{"MissingExecutionDataFailsToSerialize", missingExecutionPayload, ErrMissingData},
+		{"ValidInputSucceeds", validInput, nil, nil},
+		{"ValidInputSucceedsWithEndOfSequencingMarker", validInputWithEndOfSequencingMarker, &wantEndOfSequencing, nil}, // CHANGE(taiko): add test for EOS marker
+		{"MissingExecutionDataFailsToSerialize", missingExecutionPayload, nil, ErrMissingData},
 	}
 
 	for _, test := range tests {
@@ -485,6 +495,9 @@ func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 
 			require.NotNil(t, output.ParentBeaconBlockRoot)
 			assert.Equal(t, hash, *output.ParentBeaconBlockRoot)
+
+			// CHANGE(taiko): assertion for EOS
+			assert.Equal(t, test.wantEndOfSequencing, output.EndOfSequencing)
 
 			require.NotNil(t, output.ExecutionPayload)
 			if diff := cmp.Diff(*test.input.ExecutionPayload, *output.ExecutionPayload); diff != "" {

@@ -3,6 +3,7 @@ package opnode
 import (
 	"context"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/ethereum-optimism/optimism/op-node/node"
@@ -10,9 +11,12 @@ import (
 )
 
 type FnTracer struct {
-	OnNewL1HeadFn        func(ctx context.Context, sig eth.L1BlockRef)
-	OnUnsafeL2PayloadFn  func(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope)
-	OnPublishL2PayloadFn func(ctx context.Context, payload *eth.ExecutionPayloadEnvelope)
+	OnNewL1HeadFn                      func(ctx context.Context, sig eth.L1BlockRef)
+	OnUnsafeL2PayloadFn                func(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope)
+	OnUnsafeL2ResponseFn               func(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope) // CHANGE(taiko): add handler
+	OnUnsafeL2RequestFn                func(ctx context.Context, from peer.ID, hash common.Hash)                      // CHANGE(taiko): add handler
+	OnUnsafeL2EndOfSequencingRequestFn func(ctx context.Context, from peer.ID, epoch uint64)                          // CHANGE(taiko): add handler
+	OnPublishL2PayloadFn               func(ctx context.Context, payload *eth.ExecutionPayloadEnvelope)
 }
 
 func (n *FnTracer) OnNewL1Head(ctx context.Context, sig eth.L1BlockRef) {
@@ -24,6 +28,27 @@ func (n *FnTracer) OnNewL1Head(ctx context.Context, sig eth.L1BlockRef) {
 func (n *FnTracer) OnUnsafeL2Payload(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope) {
 	if n.OnUnsafeL2PayloadFn != nil {
 		n.OnUnsafeL2PayloadFn(ctx, from, payload)
+	}
+}
+
+// CHANGE(taiko): add OnUnsafeL2Request handler
+func (n *FnTracer) OnUnsafeL2Request(ctx context.Context, from peer.ID, hash common.Hash) {
+	if n.OnUnsafeL2RequestFn != nil {
+		n.OnUnsafeL2RequestFn(ctx, from, hash)
+	}
+}
+
+// CHANGE(taiko): add OnUnsafeL2Response handler
+func (n *FnTracer) OnUnsafeL2Response(ctx context.Context, from peer.ID, payload *eth.ExecutionPayloadEnvelope) {
+	if n.OnUnsafeL2ResponseFn != nil {
+		n.OnUnsafeL2ResponseFn(ctx, from, payload)
+	}
+}
+
+// CHANGE(taiko): add OnUnsafeL2EndOfSequencingRequest handler
+func (n *FnTracer) OnUnsafeL2EndOfSequencingRequest(ctx context.Context, from peer.ID, epoch uint64) {
+	if n.OnUnsafeL2EndOfSequencingRequestFn != nil {
+		n.OnUnsafeL2EndOfSequencingRequestFn(ctx, from, epoch)
 	}
 }
 

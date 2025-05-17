@@ -61,7 +61,10 @@ type Driver struct {
 
 	// L2 Signals:
 
-	unsafeL2Payloads chan *eth.ExecutionPayloadEnvelope
+	unsafeL2Payloads                chan *eth.ExecutionPayloadEnvelope
+	unsafeL2Responses               chan *eth.ExecutionPayloadEnvelope // CHANGE(taiko): add channel
+	unsafeL2Requests                chan common.Hash                   // CHANGE(taiko): add channel
+	unsafeL2EndOfSequencingRequests chan uint64                        // CHANGE(taiko): add channel
 
 	sequencer sequencing.SequencerIface
 	network   Network // may be nil, network for is optional
@@ -138,6 +141,36 @@ func (s *Driver) OnUnsafeL2Payload(ctx context.Context, envelope *eth.ExecutionP
 	case <-ctx.Done():
 		return ctx.Err()
 	case s.unsafeL2Payloads <- envelope:
+		return nil
+	}
+}
+
+// CHANGE(taiko): add OnUnsafeL2Request
+func (s *Driver) OnUnsafeL2Request(ctx context.Context, hash common.Hash) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case s.unsafeL2Requests <- hash:
+		return nil
+	}
+}
+
+// CHANGE(taiko): add OnUnsafeL2EndOfSequencingRequest
+func (s *Driver) OnUnsafeL2EndOfSequencingRequest(ctx context.Context, epoch uint64) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case s.unsafeL2EndOfSequencingRequests <- epoch:
+		return nil
+	}
+}
+
+// CHANGE(taiko): add OnUnsafeL2Response
+func (s *Driver) OnUnsafeL2Response(ctx context.Context, envelope *eth.ExecutionPayloadEnvelope) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case s.unsafeL2Responses <- envelope:
 		return nil
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
 	"sync"
 	"time"
 
@@ -43,6 +44,8 @@ const (
 	DefaultMeshDlazy = 6  // gossip target
 	// peerScoreInspectFrequency is the frequency at which peer scores are inspected
 	peerScoreInspectFrequency = 15 * time.Second
+	defaultBufferSize         = 768  // CHANGE(taiko): change sizes to contants
+	defaultLRUCacheSize       = 1000 // CHANGE(taiko): change sizes to contants
 )
 
 // Message domains, the msg id function uncompresses to keep data monomorphic,
@@ -87,10 +90,25 @@ func preconfBlocksTopicV1(cfg *rollup.Config) string {
 	return fmt.Sprintf("/taiko/%s/0/preconfBlocks", cfg.L2ChainID.String())
 }
 
+// CHANGE(taiko): create preconf blocks request topic.
+func preconfBlocksRequestTopic(cfg *rollup.Config) string {
+	return fmt.Sprintf("/taiko/%s/0/requestPreconfBlocks", cfg.L2ChainID.String())
+}
+
+// CHANGE(taiko): create preconf blocks end of sequencing request topic.
+func preconfBlocksEndOfSequencingRequestTopic(cfg *rollup.Config) string {
+	return fmt.Sprintf("/taiko/%s/0/requestEndOfSequencingPreconfBlocks", cfg.L2ChainID.String())
+}
+
+// CHANGE(taiko): create preconf blocks topic.
+func preconfBlocksResponseTopic(cfg *rollup.Config) string {
+	return fmt.Sprintf("/taiko/%s/0/responsePreconfBlocks", cfg.L2ChainID.String())
+}
+
 // BuildSubscriptionFilter builds a simple subscription filter,
 // to help protect against peers spamming useless subscriptions.
 func BuildSubscriptionFilter(cfg *rollup.Config) pubsub.SubscriptionFilter {
-	return pubsub.NewAllowlistSubscriptionFilter(blocksTopicV1(cfg), blocksTopicV2(cfg), blocksTopicV3(cfg), preconfBlocksTopicV1(cfg)) // add more topics here in the future, if any.
+	return pubsub.NewAllowlistSubscriptionFilter(blocksTopicV1(cfg), blocksTopicV2(cfg), blocksTopicV3(cfg), preconfBlocksTopicV1(cfg), preconfBlocksRequestTopic(cfg), preconfBlocksResponseTopic(cfg), preconfBlocksEndOfSequencingRequestTopic(cfg)) // add more topics here in the future, if any.
 }
 
 var msgBufPool = sync.Pool{New: func() any {
@@ -259,11 +277,61 @@ func (sb *seenBlocks) markSeen(h common.Hash) {
 	sb.blockHashes = append(sb.blockHashes, h)
 }
 
+// CHANGE(taiko): add seenEpochs cache.
+type seenEpochs struct {
+	sync.Mutex
+	epochs map[uint64]uint64
+}
+
+// CHANGE(taiko): numSeen checks if the epoch has been marked as seen, and how many have been seen.
+func (se *seenEpochs) numSeen(epoch uint64) (count uint64, hasSeen bool) {
+	se.Lock()
+	defer se.Unlock()
+	count, hasSeen = se.epochs[epoch]
+	return
+}
+
+// CHANGE(taiko): markSeen marks epoch as seen
+func (se *seenEpochs) markSeen(epoch uint64) {
+	se.Lock()
+	defer se.Unlock()
+	if _, ok := se.epochs[epoch]; !ok {
+		se.epochs[epoch] = 1
+	} else {
+		se.epochs[epoch]++
+	}
+}
+
+// CHANGE(taiko): add seenHashes cache.
+type seenHashes struct {
+	sync.Mutex
+	blockHashes map[common.Hash]uint64
+}
+
+// CHANGE(taiko): numSeen checks if the hash has been marked as seen, and how many have been seen.
+func (sh *seenHashes) numSeen(h common.Hash) (count uint64, hasSeen bool) {
+	sh.Lock()
+	defer sh.Unlock()
+	count, hasSeen = sh.blockHashes[h]
+	return
+}
+
+// CHANGE(taiko): markSeen marks the block hash as seen
+func (sh *seenHashes) markSeen(h common.Hash) {
+	sh.Lock()
+	defer sh.Unlock()
+	if _, ok := sh.blockHashes[h]; !ok {
+		sh.blockHashes[h] = 1
+	} else {
+		sh.blockHashes[h]++
+	}
+}
+
 // CHANGE(taiko): add preconfBlocks topic validator
 func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig, blockVersion eth.BlockVersion) pubsub.ValidatorEx {
 	// Seen block hashes per block height
 	// uint64 -> *seenBlocks
-	preconfblockLRU, err := lru.New[uint64, *seenBlocks](1000)
+	preconfblockLRU, err := lru.New[uint64, *seenBlocks](defaultLRUCacheSize)
 	if err != nil {
 		panic(fmt.Errorf("failed to set up block height LRU cache: %w", err))
 	}
@@ -305,13 +373,12 @@ func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg Goss
 			return result
 		}
 
-		var pl eth.ExecutionPayload
-		if err := pl.UnmarshalSSZ(blockVersion, uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
+		var envelope eth.ExecutionPayloadEnvelope
+		// hdr = 1 byte flag + 32 byte root, then payload
+		if err := envelope.UnmarshalSSZ(uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
 			log.Warn("invalid envelope payload", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
-
-		envelope := eth.ExecutionPayloadEnvelope{ExecutionPayload: &pl}
 
 		payload := envelope.ExecutionPayload
 
@@ -363,11 +430,174 @@ func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg Goss
 		return pubsub.ValidationAccept
 	}
 }
-func BuildBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig, blockVersion eth.BlockVersion) pubsub.ValidatorEx {
 
+// CHANGE(taiko): add preconfBlocks topic validator
+func BuildPreconfBlocksResponseValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig, blockVersion eth.BlockVersion) pubsub.ValidatorEx {
 	// Seen block hashes per block height
 	// uint64 -> *seenBlocks
-	blockHeightLRU, err := lru.New[uint64, *seenBlocks](1000)
+	preconfblockLRU, err := lru.New[uint64, *seenBlocks](defaultLRUCacheSize)
+	if err != nil {
+		panic(fmt.Errorf("failed to set up block height LRU cache: %w", err))
+	}
+
+	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
+		// [REJECT] if the compression is not valid
+		outLen, err := snappy.DecodedLen(message.Data)
+		if err != nil {
+			log.Warn("invalid snappy compression length data", "err", err, "peer", id)
+			return pubsub.ValidationReject
+		}
+		if outLen > maxGossipSize {
+			log.Warn("possible snappy zip bomb, decoded length is too large", "decoded_length", outLen, "peer", id)
+			return pubsub.ValidationReject
+		}
+		if outLen < minGossipSize {
+			log.Warn("rejecting undersized gossip payload")
+			return pubsub.ValidationReject
+		}
+
+		res := msgBufPool.Get().(*[]byte)
+		defer msgBufPool.Put(res)
+		data, err := snappy.Decode((*res)[:cap(*res)], message.Data)
+		if err != nil {
+			log.Warn("invalid snappy compression", "err", err, "peer", id)
+			return pubsub.ValidationReject
+		}
+		// if we ended up growing the slice capacity, fine, keep the larger one.
+		if cap(data) > cap(*res) {
+			*res = data[:cap(data)]
+		}
+
+		// message starts with compact-encoding secp256k1 encoded signature
+		signatureBytes, payloadBytes := data[:65], data[65:]
+
+		// [REJECT] if the signature by the sequencer is not valid
+		result := verifyBlockResponseSignature(log, cfg, runCfg, id, signatureBytes, payloadBytes)
+		if result == pubsub.ValidationReject {
+			return result
+		}
+
+		// decode full envelope (1B flag + 32B root + payload…)
+		var envelope eth.ExecutionPayloadEnvelope
+		if err := envelope.UnmarshalSSZ(uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
+			log.Warn("invalid envelope payload", "err", err, "peer", id)
+			return pubsub.ValidationReject
+		}
+
+		payload := envelope.ExecutionPayload
+
+		// [REJECT] if the `payload` is null
+		if payload == nil {
+			log.Warn("payload is empty", "peer", id)
+			return pubsub.ValidationReject
+		}
+
+		// [REJECT] if the `payload.Transactions` is null or empty
+		if len(payload.Transactions) == 0 {
+			log.Warn("payload has empty transaction data", "peer", id)
+			return pubsub.ValidationReject
+		}
+
+		// [REJECT] if the `coinbase` in the `payload` is empty
+		if payload.FeeRecipient == (common.Address{}) {
+			log.Warn("empty coinbase in payload", "peer", id)
+			return pubsub.ValidationReject
+		}
+
+		// [REJECT] if the `blockParams.blockID` is zero
+		if payload.BlockNumber == 0 {
+			log.Warn("payload has zero block ID", "peer", id)
+			return pubsub.ValidationReject
+		}
+
+		seen, ok := preconfblockLRU.Get(uint64(payload.BlockNumber))
+		if !ok {
+			seen = new(seenBlocks)
+			preconfblockLRU.Add(uint64(payload.BlockNumber), seen)
+		}
+
+		if count, _ := seen.hasSeen(payload.BlockHash); count > 10 {
+			log.Warn("seen same block hash too many times in preconf response", "height", payload.BlockNumber)
+			return pubsub.ValidationIgnore
+		}
+
+		// mark it as seen. (note: with concurrent validation more than 5 preconf blocks may be marked as seen still,
+		// but validator concurrency is limited anyway)
+		seen.markSeen(payload.BlockHash)
+
+		// remember the decoded payload for later usage in topic subscriber.
+		message.ValidatorData = &envelope
+
+		return pubsub.ValidationAccept
+	}
+}
+
+// CHANGE(taiko): add preconfBlocksRequest topic validator
+func BuildPreconfBlocksRequestValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig) pubsub.ValidatorEx {
+	// Seen block hashes per block height
+	// uint64 -> *seenBlocks
+	hashLRU, err := lru.New[common.Hash, *seenHashes](defaultLRUCacheSize)
+	if err != nil {
+		panic(fmt.Errorf("failed to set up block height LRU cache: %w", err))
+	}
+
+	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
+		hash := common.BytesToHash(message.Data)
+
+		seen, ok := hashLRU.Get(hash)
+		if !ok {
+			seen = new(seenHashes)
+			seen.blockHashes = make(map[common.Hash]uint64)
+			hashLRU.Add(hash, seen)
+		}
+
+		if count, hasSeen := seen.numSeen(hash); hasSeen && count > 5 {
+			return pubsub.ValidationIgnore
+		}
+
+		seen.markSeen(hash)
+		message.ValidatorData = hash
+
+		return pubsub.ValidationAccept
+	}
+}
+
+// CHANGE(taiko): add preconfBlocksRequest topic validator
+func BuildPreconfBlocksEndOfSequencingRequestValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig) pubsub.ValidatorEx {
+	// Seen block hashes per block height
+	// uint64 -> *seenBlocks
+	epochLRU, err := lru.New[uint64, *seenEpochs](defaultLRUCacheSize)
+	if err != nil {
+		panic(fmt.Errorf("failed to set up epoch LRU cache: %w", err))
+	}
+
+	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
+		// convert message.Data to uint256
+		epoch := big.NewInt(0).SetBytes(message.Data).Uint64()
+
+		seen, ok := epochLRU.Get(epoch)
+		if !ok {
+			seen = new(seenEpochs)
+			seen.epochs = make(map[uint64]uint64)
+			epochLRU.Add(epoch, seen)
+		}
+
+		if count, hasSeen := seen.numSeen(epoch); hasSeen && count > 5 {
+			return pubsub.ValidationIgnore
+		}
+
+		seen.markSeen(epoch)
+
+		message.ValidatorData = epoch
+
+		return pubsub.ValidationAccept
+	}
+}
+
+func BuildBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig, blockVersion eth.BlockVersion) pubsub.ValidatorEx {
+	// Seen block hashes per block height
+	// uint64 -> *seenBlocks
+	blockHeightLRU, err := lru.New[uint64, *seenBlocks](defaultLRUCacheSize) // CHANGE(taiko): change sizes to contants
 	if err != nil {
 		panic(fmt.Errorf("failed to set up block height LRU cache: %w", err))
 	}
@@ -579,8 +809,62 @@ func verifyBlockSignature(log log.Logger, cfg *rollup.Config, runCfg GossipRunti
 	return pubsub.ValidationAccept
 }
 
+// CHANGE(taiko): verifies the block response signature
+func verifyBlockResponseSignature(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig, id peer.ID, signatureBytes []byte, payloadBytes []byte) pubsub.ValidationResult {
+	signingHash, err := BlockSigningHash(cfg, payloadBytes)
+	if err != nil {
+		log.Warn("failed to compute block signing hash", "err", err, "peer", id)
+		return pubsub.ValidationReject
+	}
+
+	pub, err := crypto.SigToPub(signingHash[:], signatureBytes)
+	if err != nil {
+		log.Warn("invalid block response signature", "err", err, "peer", id)
+		return pubsub.ValidationReject
+	}
+	addr := crypto.PubkeyToAddress(*pub)
+
+	// CHANGE(taiko): check if the signer is in the whitelist.
+	if cfg, ok := runCfg.(PreconfGossipRuntimeConfig); ok {
+		if len(cfg.P2PSequencerAddresses()) == 0 {
+			return pubsub.ValidationIgnore
+		}
+		// If the signer is in the whitelist, accept the block.
+		for _, expected := range cfg.P2PSequencerAddresses() {
+			// If the signer is an empty address, accept the block.
+			// TODO: Remove this check once we have a real whitelist of sequencer addresses.
+			if expected == (common.Address{}) {
+				log.Warn("empty no configured p2p sequencer address", "peer", id, "addr", addr)
+				return pubsub.ValidationAccept
+			} else if addr == expected {
+				return pubsub.ValidationAccept
+			}
+		}
+
+		log.Warn("unexpected block response authors", "err", err, "peer", id, "addr", cfg.P2PSequencerAddresses())
+		return pubsub.ValidationReject
+	}
+
+	// In the future we may load & validate block metadata before checking the signature.
+	// And then check the signer based on the metadata, to support e.g. multiple p2p signers at the same time.
+	// For now we only have one signer at a time and thus check the address directly.
+	// This means we may drop old payloads upon key rotation,
+	// but this can be recovered from like any other missed unsafe payload.
+	if expected := runCfg.P2PSequencerAddress(); expected == (common.Address{}) {
+		log.Warn("no configured p2p sequencer address, ignoring gossiped block response", "peer", id, "addr", addr)
+		return pubsub.ValidationIgnore
+	} else if addr != expected {
+		log.Warn("unexpected block response author", "err", err, "peer", id, "addr", addr, "expected", expected)
+		return pubsub.ValidationReject
+	}
+	return pubsub.ValidationAccept
+}
+
 type GossipIn interface {
 	OnUnsafeL2Payload(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error
+	OnUnsafeL2Request(ctx context.Context, from peer.ID, msg common.Hash) error
+	OnUnsafeL2EndOfSequencingRequest(ctx context.Context, from peer.ID, epoch uint64) error
+	OnUnsafeL2Response(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error
 }
 
 type GossipTopicInfo interface {
@@ -593,6 +877,9 @@ type GossipTopicInfo interface {
 type GossipOut interface {
 	GossipTopicInfo
 	PublishL2Payload(ctx context.Context, msg *eth.ExecutionPayloadEnvelope, signer Signer) error
+	PublishL2RequestResponse(ctx context.Context, msg *eth.ExecutionPayloadEnvelope, signer Signer) error
+	PublishL2Request(ctx context.Context, hash common.Hash) error            // TODO: add signer, sign request
+	PublishL2EndOfSequencingRequest(ctx context.Context, epoch uint64) error // TODO: add signer, sign request
 	Close() error
 }
 
@@ -624,7 +911,10 @@ type publisher struct {
 	blocksV2 *blockTopic
 	blocksV3 *blockTopic
 	// CHANGE(taiko): add preconf blocks topic
-	preconfBlocksV1 *blockTopic
+	preconfBlocksV1                     *blockTopic
+	preconfBlocksRequest                *blockTopic
+	preconfBlocksResponse               *blockTopic
+	preconfBlocksEndOfSequencingRequest *blockTopic
 
 	runCfg GossipRuntimeConfig
 }
@@ -678,14 +968,9 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 
 	buf.Write(make([]byte, 65))
 
-	if envelope.ParentBeaconBlockRoot != nil {
-		if _, err := envelope.MarshalSSZ(buf); err != nil {
-			return fmt.Errorf("failed to encoded execution payload envelope to publish: %w", err)
-		}
-	} else {
-		if _, err := envelope.ExecutionPayload.MarshalSSZ(buf); err != nil {
-			return fmt.Errorf("failed to encoded execution payload to publish: %w", err)
-		}
+	// change(taiko): always emit the full envelope (flag + root placeholder + payload)
+	if _, err := envelope.MarshalSSZ(buf); err != nil {
+		return fmt.Errorf("failed to encode execution payload envelope to publish: %w", err)
 	}
 
 	data := buf.Bytes()
@@ -714,6 +999,51 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 	}
 }
 
+// CHANGE(taiko): publish to preconfBlocksRequest topic
+func (p *publisher) PublishL2Request(ctx context.Context, hash common.Hash) error {
+	return p.preconfBlocksRequest.topic.Publish(ctx, hash.Bytes())
+}
+
+// CHANGE(taiko): publish to preconfBlocksEndOfSequencingRequest topic
+func (p *publisher) PublishL2EndOfSequencingRequest(ctx context.Context, epoch uint64) error {
+	// convert epoch to bytes
+	epochBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(epochBytes, epoch)
+
+	return p.preconfBlocksEndOfSequencingRequest.topic.Publish(ctx, epochBytes)
+}
+
+// CHANGE(taiko): publish to preconfBlocksResponse topic
+func (p *publisher) PublishL2RequestResponse(ctx context.Context, envelope *eth.ExecutionPayloadEnvelope, signer Signer) error {
+	res := msgBufPool.Get().(*[]byte)
+	buf := bytes.NewBuffer((*res)[:0])
+	defer func() {
+		*res = buf.Bytes()
+		defer msgBufPool.Put(res)
+	}()
+
+	buf.Write(make([]byte, 65))
+
+	// change(taiko): always emit the full envelope (flag + root placeholder + payload)
+	if _, err := envelope.MarshalSSZ(buf); err != nil {
+		return fmt.Errorf("failed to encode execution payload envelope to publish: %w", err)
+	}
+
+	data := buf.Bytes()
+	payloadData := data[65:]
+	sig, err := signer.Sign(ctx, SigningDomainBlocksV1, p.cfg.L2ChainID, payloadData)
+	if err != nil {
+		return fmt.Errorf("failed to sign execution payload with signer: %w", err)
+	}
+	copy(data[:65], sig[:])
+
+	// compress the full message
+	// This also copies the data, freeing up the original buffer to go back into the pool
+	out := snappy.Encode(nil, data)
+
+	return p.preconfBlocksResponse.topic.Publish(ctx, out)
+}
+
 func (p *publisher) Close() error {
 	p.p2pCancel()
 	e1 := p.blocksV1.Close()
@@ -726,7 +1056,7 @@ func JoinGossip(self peer.ID, ps *pubsub.PubSub, log log.Logger, cfg *rollup.Con
 
 	v1Logger := log.New("topic", "blocksV1")
 	blocksV1Validator := guardGossipValidator(log, logValidationResult(self, "validated blockv1", v1Logger, BuildBlocksValidator(v1Logger, cfg, runCfg, eth.BlockV1)))
-	blocksV1, err := newBlockTopic(p2pCtx, blocksTopicV1(cfg), ps, v1Logger, gossipIn, blocksV1Validator)
+	blocksV1, err := newBlockTopic(p2pCtx, blocksTopicV1(cfg), ps, v1Logger, blocksV1Validator, gossipIn.OnUnsafeL2Payload)
 	if err != nil {
 		p2pCancel()
 		return nil, fmt.Errorf("failed to setup blocks v1 p2p: %w", err)
@@ -734,7 +1064,7 @@ func JoinGossip(self peer.ID, ps *pubsub.PubSub, log log.Logger, cfg *rollup.Con
 
 	v2Logger := log.New("topic", "blocksV2")
 	blocksV2Validator := guardGossipValidator(log, logValidationResult(self, "validated blockv2", v2Logger, BuildBlocksValidator(v2Logger, cfg, runCfg, eth.BlockV2)))
-	blocksV2, err := newBlockTopic(p2pCtx, blocksTopicV2(cfg), ps, v2Logger, gossipIn, blocksV2Validator)
+	blocksV2, err := newBlockTopic(p2pCtx, blocksTopicV2(cfg), ps, v2Logger, blocksV2Validator, gossipIn.OnUnsafeL2Payload)
 	if err != nil {
 		p2pCancel()
 		return nil, fmt.Errorf("failed to setup blocks v2 p2p: %w", err)
@@ -742,7 +1072,7 @@ func JoinGossip(self peer.ID, ps *pubsub.PubSub, log log.Logger, cfg *rollup.Con
 
 	v3Logger := log.New("topic", "blocksV3")
 	blocksV3Validator := guardGossipValidator(log, logValidationResult(self, "validated blockv3", v3Logger, BuildBlocksValidator(v3Logger, cfg, runCfg, eth.BlockV3)))
-	blocksV3, err := newBlockTopic(p2pCtx, blocksTopicV3(cfg), ps, v3Logger, gossipIn, blocksV3Validator)
+	blocksV3, err := newBlockTopic(p2pCtx, blocksTopicV3(cfg), ps, v3Logger, blocksV3Validator, gossipIn.OnUnsafeL2Payload)
 	if err != nil {
 		p2pCancel()
 		return nil, fmt.Errorf("failed to setup blocks v3 p2p: %w", err)
@@ -751,25 +1081,134 @@ func JoinGossip(self peer.ID, ps *pubsub.PubSub, log log.Logger, cfg *rollup.Con
 	// CHANGE(taiko): setup preconf blocks topic.
 	preconfBlocksV1Logger := log.New("topic", "preconfBlocksV1")
 	preconfBlocksV1Validator := guardGossipValidator(preconfBlocksV1Logger, logValidationResult(self, "validated preconfBlockv1", preconfBlocksV1Logger, BuildPreconfBlocksValidator(preconfBlocksV1Logger, cfg, runCfg, eth.BlockV1)))
-	preconfBlocksV1, err := newBlockTopic(p2pCtx, preconfBlocksTopicV1(cfg), ps, preconfBlocksV1Logger, gossipIn, preconfBlocksV1Validator)
+	preconfBlocksV1, err := newBlockTopic(p2pCtx, preconfBlocksTopicV1(cfg), ps, preconfBlocksV1Logger, preconfBlocksV1Validator, gossipIn.OnUnsafeL2Payload)
 	if err != nil {
 		p2pCancel()
 		return nil, fmt.Errorf("failed to setup preconf blocks v1 p2p: %w", err)
 	}
 
+	// CHANGE(taiko): setup preconf blocks request topic
+	preconfBlocksRequestLogger := log.New("topic", "preconfBlockRequest")
+	preconfBlocksRequestValidator := guardGossipValidator(preconfBlocksRequestLogger, logValidationResult(self, "validated preconfBlocksRequest", preconfBlocksRequestLogger, BuildPreconfBlocksRequestValidator(preconfBlocksRequestLogger, cfg, runCfg)))
+	preconfBlocksRequest, err := newRequestTopic(p2pCtx, preconfBlocksRequestTopic(cfg), ps, preconfBlocksRequestLogger, gossipIn, preconfBlocksRequestValidator)
+	if err != nil {
+		p2pCancel()
+		return nil, fmt.Errorf("failed to setup preconf blocks request p2p: %w", err)
+	}
+
+	// CHANGE(taiko): setup preconf blocks end of sequencing request topic
+	preconfBlocksEndOfSequencingRequestLogger := log.New("topic", "preconfBlockEndOfSequencingRequest")
+	preconfBlocksEndOfSequencingRequestValidator := guardGossipValidator(preconfBlocksEndOfSequencingRequestLogger, logValidationResult(self, "validated preconfBlocksEndOfSequencingRequest", preconfBlocksEndOfSequencingRequestLogger, BuildPreconfBlocksEndOfSequencingRequestValidator(preconfBlocksEndOfSequencingRequestLogger, cfg, runCfg)))
+	preconfBlocksEndOfSequencingRequest, err := newEndOfSequencingRequestTopic(p2pCtx, preconfBlocksEndOfSequencingRequestTopic(cfg), ps, preconfBlocksEndOfSequencingRequestLogger, gossipIn, preconfBlocksEndOfSequencingRequestValidator)
+	if err != nil {
+		p2pCancel()
+		return nil, fmt.Errorf("failed to setup preconf blocks end of sequencing request p2p: %w", err)
+	}
+
+	// CHANGE(taiko): setup preconf blocks response topic
+	respLogger := log.New("topic", "preconfBlockResponse")
+	respVal := guardGossipValidator(respLogger, logValidationResult(self, "validated preconfBlockResponse", respLogger, BuildPreconfBlocksResponseValidator(respLogger, cfg, runCfg, eth.BlockV1)))
+	preconfBlocksResponse, err := newBlockTopic(p2pCtx, preconfBlocksResponseTopic(cfg), ps, respLogger, respVal, gossipIn.OnUnsafeL2Response)
+	if err != nil {
+		p2pCancel()
+		return nil, fmt.Errorf("failed to setup preconf blocks request p2p: %w", err)
+	}
+
 	return &publisher{
-		log:             log,
-		cfg:             cfg,
-		p2pCancel:       p2pCancel,
-		blocksV1:        blocksV1,
-		blocksV2:        blocksV2,
-		blocksV3:        blocksV3,
-		preconfBlocksV1: preconfBlocksV1,
-		runCfg:          runCfg,
+		log:                                 log,
+		cfg:                                 cfg,
+		p2pCancel:                           p2pCancel,
+		blocksV1:                            blocksV1,
+		blocksV2:                            blocksV2,
+		blocksV3:                            blocksV3,
+		preconfBlocksV1:                     preconfBlocksV1,
+		preconfBlocksRequest:                preconfBlocksRequest,
+		preconfBlocksResponse:               preconfBlocksResponse,
+		preconfBlocksEndOfSequencingRequest: preconfBlocksEndOfSequencingRequest,
+		runCfg:                              runCfg,
 	}, nil
 }
 
-func newBlockTopic(ctx context.Context, topicId string, ps *pubsub.PubSub, log log.Logger, gossipIn GossipIn, validator pubsub.ValidatorEx) (*blockTopic, error) {
+// CHANGE(taiko): create preconf blocks topic
+func newRequestTopic(ctx context.Context, topicId string, ps *pubsub.PubSub, log log.Logger, gossipIn GossipIn, validator pubsub.ValidatorEx) (*blockTopic, error) {
+	err := ps.RegisterTopicValidator(topicId,
+		validator,
+		pubsub.WithValidatorTimeout(3*time.Second),
+		pubsub.WithValidatorConcurrency(4))
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to register gossip topic: %w", err)
+	}
+
+	topic, err := ps.Join(topicId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to join gossip topic: %w", err)
+	}
+
+	blocksTopicEvents, err := topic.EventHandler()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create blocks gossip topic handler: %w", err)
+	}
+
+	go LogTopicEvents(ctx, log, blocksTopicEvents)
+
+	subscription, err := topic.Subscribe(pubsub.WithBufferSize(defaultBufferSize))
+	if err != nil {
+		err = errors.Join(err, topic.Close())
+		return nil, fmt.Errorf("failed to subscribe to blocks gossip topic: %w", err)
+	}
+
+	subscriber := MakeSubscriber(log, RequestsHandler(gossipIn.OnUnsafeL2Request))
+	go subscriber(ctx, subscription)
+
+	return &blockTopic{
+		topic:  topic,
+		events: blocksTopicEvents,
+		sub:    subscription,
+	}, nil
+}
+
+// CHANGE(taiko): create preconf blocks end of sequencing request topic
+func newEndOfSequencingRequestTopic(ctx context.Context, topicId string, ps *pubsub.PubSub, log log.Logger, gossipIn GossipIn, validator pubsub.ValidatorEx) (*blockTopic, error) {
+	err := ps.RegisterTopicValidator(topicId,
+		validator,
+		pubsub.WithValidatorTimeout(3*time.Second),
+		pubsub.WithValidatorConcurrency(4))
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to register gossip topic: %w", err)
+	}
+
+	topic, err := ps.Join(topicId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to join gossip topic: %w", err)
+	}
+
+	blocksTopicEvents, err := topic.EventHandler()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create blocks gossip topic handler: %w", err)
+	}
+
+	go LogTopicEvents(ctx, log, blocksTopicEvents)
+
+	subscription, err := topic.Subscribe(pubsub.WithBufferSize(defaultBufferSize))
+	if err != nil {
+		err = errors.Join(err, topic.Close())
+		return nil, fmt.Errorf("failed to subscribe to blocks gossip topic: %w", err)
+	}
+
+	subscriber := MakeSubscriber(log, EndOfSequencingRequestsHandler(gossipIn.OnUnsafeL2EndOfSequencingRequest))
+	go subscriber(ctx, subscription)
+
+	return &blockTopic{
+		topic:  topic,
+		events: blocksTopicEvents,
+		sub:    subscription,
+	}, nil
+}
+
+// CHANGE(taiko): create preconf blocks response topic
+func newBlockTopic(ctx context.Context, topicId string, ps *pubsub.PubSub, log log.Logger, validator pubsub.ValidatorEx, handlerFunc func(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error) (*blockTopic, error) {
 	err := ps.RegisterTopicValidator(topicId,
 		validator,
 		pubsub.WithValidatorTimeout(3*time.Second),
@@ -791,13 +1230,13 @@ func newBlockTopic(ctx context.Context, topicId string, ps *pubsub.PubSub, log l
 
 	go LogTopicEvents(ctx, log, blocksTopicEvents)
 
-	subscription, err := blocksTopic.Subscribe(pubsub.WithBufferSize(768)) // CHANGE(taiko): change buffer size to `maxBlocksPerBatch`
+	subscription, err := blocksTopic.Subscribe(pubsub.WithBufferSize(defaultBufferSize)) // CHANGE(taiko): change buffer size to defaultBufferSize
 	if err != nil {
 		err = errors.Join(err, blocksTopic.Close())
 		return nil, fmt.Errorf("failed to subscribe to blocks gossip topic: %w", err)
 	}
 
-	subscriber := MakeSubscriber(log, BlocksHandler(gossipIn.OnUnsafeL2Payload))
+	subscriber := MakeSubscriber(log, BlocksHandler(handlerFunc))
 	go subscriber(ctx, subscription)
 
 	return &blockTopic{
@@ -817,6 +1256,28 @@ func BlocksHandler(onBlock func(ctx context.Context, from peer.ID, msg *eth.Exec
 			return fmt.Errorf("expected topic validator to parse and validate data into execution payload, but got %T", msg)
 		}
 		return onBlock(ctx, from, payload)
+	}
+}
+
+// CHANGE(taiko): create preconf blocks request handler
+func RequestsHandler(onRequest func(ctx context.Context, from peer.ID, hash common.Hash) error) MessageHandler {
+	return func(ctx context.Context, from peer.ID, msg any) error {
+		payload, ok := msg.(common.Hash)
+		if !ok {
+			return fmt.Errorf("expected topic validator to parse and validate data into hash, but got %T", msg)
+		}
+		return onRequest(ctx, from, payload)
+	}
+}
+
+// CHANGE(taiko): create preconf blocks end of sequencing request handler
+func EndOfSequencingRequestsHandler(onRequest func(ctx context.Context, from peer.ID, epoch uint64) error) MessageHandler {
+	return func(ctx context.Context, from peer.ID, msg any) error {
+		payload, ok := msg.(uint64)
+		if !ok {
+			return fmt.Errorf("expected topic validator to parse and validate data into uint64, but got %T", msg)
+		}
+		return onRequest(ctx, from, payload)
 	}
 }
 

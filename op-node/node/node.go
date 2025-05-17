@@ -15,6 +15,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/common"
 	gethevent "github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 
@@ -38,6 +39,9 @@ import (
 )
 
 var ErrAlreadyClosed = errors.New("node is already closed")
+
+// CHANGE(taiko): change timeout to constant
+var defaultCtxTimeout = time.Second * 30
 
 type closableSafeDB interface {
 	rollup.SafeHeadListener
@@ -623,10 +627,77 @@ func (n *OpNode) OnUnsafeL2Payload(ctx context.Context, from peer.ID, envelope *
 		"txs", len(envelope.ExecutionPayload.Transactions))
 
 	// Pass on the event to the L2 Engine
-	ctx, cancel := context.WithTimeout(ctx, time.Second*30)
+	ctx, cancel := context.WithTimeout(ctx, defaultCtxTimeout) // CHANGE(taiko): change timeout to constant
 	defer cancel()
 
 	if err := n.l2Driver.OnUnsafeL2Payload(ctx, envelope); err != nil {
+		n.log.Warn("failed to notify engine driver of new L2 payload", "err", err, "id", envelope.ExecutionPayload.ID())
+	}
+
+	return nil
+}
+
+// CHANGE(taiko): add OnUnsafeL2Request
+func (n *OpNode) OnUnsafeL2Request(ctx context.Context, from peer.ID, hash common.Hash) error {
+	// ignore if it's from ourselves
+	if p2pNode := n.getP2PNodeIfEnabled(); p2pNode != nil && from == p2pNode.Host().ID() {
+		return nil
+	}
+
+	n.tracer.OnUnsafeL2Request(ctx, from, hash)
+
+	n.log.Info("Received request for L2 block", "peer", from, "hash", hash.Hex())
+
+	// Pass on the event to the L2 Engine
+	ctx, cancel := context.WithTimeout(ctx, defaultCtxTimeout)
+	defer cancel()
+
+	if err := n.l2Driver.OnUnsafeL2Request(ctx, hash); err != nil {
+		n.log.Warn("failed to notify engine driver of new L2 payload", "err", err, "hash", hash.Hex())
+	}
+
+	return nil
+}
+
+// CHANGE(taiko): add OnUnsafeL2EndOfSequencingRequest
+func (n *OpNode) OnUnsafeL2EndOfSequencingRequest(ctx context.Context, from peer.ID, epoch uint64) error {
+	// ignore if it's from ourselves
+	if p2pNode := n.getP2PNodeIfEnabled(); p2pNode != nil && from == p2pNode.Host().ID() {
+		return nil
+	}
+
+	n.tracer.OnUnsafeL2EndOfSequencingRequest(ctx, from, epoch)
+
+	n.log.Info("Received end of sequencing request for L2 block", "peer", from, "hash", epoch)
+
+	// Pass on the event to the L2 Engine
+	ctx, cancel := context.WithTimeout(ctx, defaultCtxTimeout)
+	defer cancel()
+
+	if err := n.l2Driver.OnUnsafeL2EndOfSequencingRequest(ctx, epoch); err != nil {
+		n.log.Warn("failed to notify engine driver of new L2 payload", "err", err, "epoch", epoch)
+	}
+
+	return nil
+}
+
+// CHANGE (taiko): add OnUnsafeL2Response
+func (n *OpNode) OnUnsafeL2Response(ctx context.Context, from peer.ID, envelope *eth.ExecutionPayloadEnvelope) error {
+	// ignore if it's from ourselves
+	if p2pNode := n.getP2PNodeIfEnabled(); p2pNode != nil && from == p2pNode.Host().ID() {
+		return nil
+	}
+
+	n.tracer.OnUnsafeL2Response(ctx, from, envelope)
+
+	n.log.Info("Received signed execution payload response from p2p", "id", envelope.ExecutionPayload.ID(), "peer", from,
+		"txs", len(envelope.ExecutionPayload.Transactions))
+
+	// Pass on the event to the L2 Engine
+	ctx, cancel := context.WithTimeout(ctx, defaultCtxTimeout)
+	defer cancel()
+
+	if err := n.l2Driver.OnUnsafeL2Response(ctx, envelope); err != nil {
 		n.log.Warn("failed to notify engine driver of new L2 payload", "err", err, "id", envelope.ExecutionPayload.ID())
 	}
 
