@@ -836,6 +836,7 @@ func (m *SimpleTxManager) increaseGasPrice(ctx context.Context, tx *types.Transa
 		// CHANGE(taiko): If we can't estimate gas (mainly for blob transactions),
 		// we should just use the gas limit from the original transaction.
 		gas = tx.Gas()
+		err = nil // Reset the error to ensure the fallback path is treated as successful
 	}
 	if tx.Gas() != gas {
 		// non-determinism in gas limit estimation happens regularly due to underlying state
