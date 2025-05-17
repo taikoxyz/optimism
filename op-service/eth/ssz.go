@@ -501,7 +501,7 @@ func (envelope *ExecutionPayloadEnvelope) MarshalSSZ(w io.Writer) (n int, err er
 	}
 	m, err := w.Write(root[:])
 	if err != nil || m != common.HashLength {
-		return n, errors.New("write parentBeaconBlockRoot failed")
+		return n, fmt.Errorf("write parentBeaconBlockRoot: %w", err)
 	}
 	n += m
 
