@@ -32,8 +32,8 @@ const (
 	maxGossipSize = 10 * (1 << 20)
 	// minGossipSize is used to make sure that there is at least some data to validate the signature against.
 	minGossipSize          = 66
-	maxOutboundQueue       = 768 // CHANGE(taiko): upgrade queue size
-	maxValidateQueue       = 768 // CHANGE(taiko): upgrade queue size
+	maxOutboundQueue       = 768 * 3 // CHANGE(taiko): upgrade queue size
+	maxValidateQueue       = 768 * 3 // CHANGE(taiko): upgrade queue size
 	globalValidateThrottle = 512
 	gossipHeartbeat        = 500 * time.Millisecond
 	// seenMessagesTTL limits the duration that message IDs are remembered for gossip deduplication purposes
@@ -45,8 +45,8 @@ const (
 	DefaultMeshDlazy = 6  // gossip target
 	// peerScoreInspectFrequency is the frequency at which peer scores are inspected
 	peerScoreInspectFrequency = 15 * time.Second
-	defaultBufferSize         = 768  // CHANGE(taiko): change sizes to contants
-	defaultLRUCacheSize       = 1000 // CHANGE(taiko): change sizes to contants
+	defaultBufferSize         = 768 * 3 // CHANGE(taiko): change sizes to contants
+	defaultLRUCacheSize       = 1000    // CHANGE(taiko): change sizes to contants
 )
 
 // Message domains, the msg id function uncompresses to keep data monomorphic,
