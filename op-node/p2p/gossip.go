@@ -32,8 +32,8 @@ const (
 	maxGossipSize = 10 * (1 << 20)
 	// minGossipSize is used to make sure that there is at least some data to validate the signature against.
 	minGossipSize          = 66
-	maxOutboundQueue       = 256
-	maxValidateQueue       = 256
+	maxOutboundQueue       = 768 // CHANGE(taiko): upgrade queue size
+	maxValidateQueue       = 768 // CHANGE(taiko): upgrade queue size
 	globalValidateThrottle = 512
 	gossipHeartbeat        = 500 * time.Millisecond
 	// seenMessagesTTL limits the duration that message IDs are remembered for gossip deduplication purposes
