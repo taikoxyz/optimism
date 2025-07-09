@@ -20,6 +20,11 @@ const ( // iota is reset to 0
 	BlockV3
 )
 
+const (
+	hdrSize         = 2 + common.HashLength // 2 flag bytes + 32-byte root
+	signatureLength = 65
+)
+
 // ExecutionPayload and ExecutionPayloadEnvelope are the only SSZ types we have to marshal/unmarshal,
 // so instead of importing a SSZ lib we implement the bare minimum.
 // This is more efficient than RLP, and matches the L1 consensus-layer encoding of ExecutionPayload.
@@ -440,86 +445,120 @@ func unmarshalTransactions(in []byte) (txs []Data, err error) {
 // change(taiko):
 // UnmarshalSSZ reads 2B flags → nil/true, then root, then payload…
 func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader) error {
-	const hdr = 2 + common.HashLength
-	if scope < hdr {
-		return fmt.Errorf("scope too small: %d, must be at least %d (1 + common.HashLength)", scope, hdr)
+	if scope < hdrSize {
+		return fmt.Errorf("scope (%d) smaller than header size (%d)", scope, hdrSize)
 	}
 
-	// CHANGE(taiko0: read the flag for EndOfSequencing)
-	// 1st flag: EndOfSequencing
-	var buf [2]byte
-	if _, err := io.ReadFull(r, buf[:]); err != nil {
+	// 1) read the two flag bytes…
+	var flags [2]byte
+	if _, err := io.ReadFull(r, flags[:]); err != nil {
 		return fmt.Errorf("read flags: %w", err)
 	}
-	if buf[0] == 1 {
+	if flags[0]&0x01 != 0 {
 		t := true
 		envelope.EndOfSequencing = &t
-	} else {
-		envelope.EndOfSequencing = nil
 	}
-	// 2nd flag: IsForcedInclusion
-	if buf[1] == 1 {
+	if flags[1]&0x01 != 0 {
 		f := true
 		envelope.IsForcedInclusion = &f
-	} else {
-		envelope.IsForcedInclusion = nil
 	}
+	hasSig := flags[1]&0x02 != 0
 
-	// CHANGE(taiko): always read the parent beacon block root, default to zero
+	// 2) read the 32-byte root
 	var root common.Hash
 	if _, err := io.ReadFull(r, root[:]); err != nil {
 		return fmt.Errorf("read parentBeaconBlockRoot: %w", err)
 	}
 	envelope.ParentBeaconBlockRoot = &root
 
-	payloadScope := scope - hdr
+	// 3) carve out the payload’s byte-length
+	payloadScope := scope - hdrSize
+	if hasSig {
+		payloadScope -= signatureLength
+	}
+
+	// 4) auto-detect V1 vs V2 vs V3 by the fixed-part size
+	var version BlockVersion
+	switch {
+	case payloadScope >= executionPayloadFixedPart(BlockV3):
+		version = BlockV3
+	case payloadScope >= executionPayloadFixedPart(BlockV2):
+		version = BlockV2
+	default:
+		version = BlockV1
+	}
+
+	// 5) decode the payload
 	payload := new(ExecutionPayload)
-	if err := payload.UnmarshalSSZ(BlockV3, payloadScope, r); err != nil {
-		return err
+	if err := payload.UnmarshalSSZ(version, payloadScope, r); err != nil {
+		return fmt.Errorf("decode payload: %w", err)
 	}
 	envelope.ExecutionPayload = payload
+
+	// 6) if there _was_ a signature bit, read exactly 65 more bytes
+	if hasSig {
+		var sig [signatureLength]byte
+		if _, err := io.ReadFull(r, sig[:]); err != nil {
+			return fmt.Errorf("read signature: %w", err)
+		}
+		envelope.Signature = &sig
+	}
 
 	return nil
 }
 
 // change(taiko):
-// MarshalSSZ writes 1B flag + 32B root + payload…
+// MarshalSSZ writes 1B flag + 32B root + payload + signature
 func (envelope *ExecutionPayloadEnvelope) MarshalSSZ(w io.Writer) (n int, err error) {
-	// EndOfSequencing is optional, allow to be nil.
-	// change(taiko): use placeholder root, allow BeaconBlockRoot to be unset
+	// 0) guard against nil payload
 	if envelope.ExecutionPayload == nil {
 		return 0, ErrMissingData
 	}
 
-	// CHANGE(taiko): detect flags
-	flags := []byte{0, 0}
+	// (1) build your 2 flag bytes
+	var flags [2]byte
 	if envelope.EndOfSequencing != nil && *envelope.EndOfSequencing {
-		flags[0] = 1
+		flags[0] |= 0x01
 	}
 	if envelope.IsForcedInclusion != nil && *envelope.IsForcedInclusion {
-		flags[1] = 1
+		flags[1] |= 0x01
+	}
+	// **new**: third bit = signature present
+	if envelope.Signature != nil {
+		flags[1] |= 0x02
+	}
+	m, err := w.Write(flags[:])
+	n += m
+	if err != nil {
+		return n, fmt.Errorf("write flags: %w", err)
 	}
 
-	// write both flags
-	m, err := w.Write(flags)
-	if err != nil || m != 2 {
-		return 0, fmt.Errorf("write flags: %w", err)
-	}
-
-	n = m
-
-	// write beacon‐root (zeroed if nil)
+	// (2) write the parentBeaconBlockRoot
 	var root common.Hash
 	if envelope.ParentBeaconBlockRoot != nil {
 		root = *envelope.ParentBeaconBlockRoot
 	}
 	m, err = w.Write(root[:])
-	if err != nil || m != common.HashLength {
+	n += m
+	if err != nil {
 		return n, fmt.Errorf("write parentBeaconBlockRoot: %w", err)
 	}
-	n += m
 
-	// then delegate to payload
+	// (3) payload
 	m, err = envelope.ExecutionPayload.MarshalSSZ(w)
-	return n + m, err
+	n += m
+	if err != nil {
+		return n, err
+	}
+
+	// (4) optional signature
+	if envelope.Signature != nil {
+		m, err = w.Write(envelope.Signature[:])
+		n += m
+		if err != nil {
+			return n, fmt.Errorf("write signature: %w", err)
+		}
+	}
+
+	return n, nil
 }

@@ -47,6 +47,7 @@ const (
 	peerScoreInspectFrequency = 15 * time.Second
 	defaultBufferSize         = 768  // CHANGE(taiko): change sizes to contants
 	defaultLRUCacheSize       = 1000 // CHANGE(taiko): change sizes to contants
+	expectedSigLen            = 65   // CHANGE(taiko): expected signature length for the sequencer signature
 )
 
 // Message domains, the msg id function uncompresses to keep data monomorphic,
@@ -938,42 +939,46 @@ func (p *publisher) PreconfBlocksTopicV1Peers() []peer.ID {
 }
 
 func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.ExecutionPayloadEnvelope, signer Signer) error {
-	res := msgBufPool.Get().(*[]byte)
-	buf := bytes.NewBuffer((*res)[:0])
-	defer func() {
-		*res = buf.Bytes()
-		defer msgBufPool.Put(res)
-	}()
-
-	buf.Write(make([]byte, 65))
-
-	// change(taiko): always emit the full envelope (flag + root placeholder + payload)
-	if _, err := envelope.MarshalSSZ(buf); err != nil {
-		return fmt.Errorf("failed to encode execution payload envelope to publish: %w", err)
+	// 1) Marshal flags+root+payload (no signature yet)
+	var payloadBuf bytes.Buffer
+	if _, err := envelope.MarshalSSZ(&payloadBuf); err != nil {
+		return fmt.Errorf("encode envelope (no sig): %w", err)
 	}
 
-	data := buf.Bytes()
-	payloadData := data[65:]
-	sig, err := signer.Sign(ctx, SigningDomainBlocksV1, p.cfg.L2ChainID, payloadData)
+	// 2) Sign exactly those bytes
+	sig, err := signer.Sign(
+		ctx,
+		SigningDomainBlocksV1,
+		p.cfg.L2ChainID,
+		payloadBuf.Bytes(),
+	)
 	if err != nil {
-		return fmt.Errorf("failed to sign execution payload with signer: %w", err)
+		return fmt.Errorf("sign execution payload: %w", err)
 	}
-	copy(data[:65], sig[:])
+	if len(sig) != expectedSigLen {
+		return fmt.Errorf("invalid signature length %d, want %d", len(sig), expectedSigLen)
+	}
 
-	// compress the full message
-	// This also copies the data, freeing up the original buffer to go back into the pool
-	out := snappy.Encode(nil, data)
+	// 3) Persist into the envelope
+	envelope.Signature = sig
 
-	// CHANGE(taiko): publish to preconfBlocksV1 topic if Taiko flag is enabled
-	if p.cfg.Taiko {
+	// 4) Re-marshal the full envelope (flags + root + payload + signature)
+	var fullBuf bytes.Buffer
+	if _, err := envelope.MarshalSSZ(&fullBuf); err != nil {
+		return fmt.Errorf("encode envelope (with sig): %w", err)
+	}
+
+	// 5) Compress and publish
+	out := snappy.Encode(nil, fullBuf.Bytes())
+
+	switch {
+	case p.cfg.Taiko:
 		return p.preconfBlocksV1.topic.Publish(ctx, out)
-	}
-
-	if p.cfg.IsEcotone(uint64(envelope.ExecutionPayload.Timestamp)) {
+	case p.cfg.IsEcotone(uint64(envelope.ExecutionPayload.Timestamp)):
 		return p.blocksV3.topic.Publish(ctx, out)
-	} else if p.cfg.IsCanyon(uint64(envelope.ExecutionPayload.Timestamp)) {
+	case p.cfg.IsCanyon(uint64(envelope.ExecutionPayload.Timestamp)):
 		return p.blocksV2.topic.Publish(ctx, out)
-	} else {
+	default:
 		return p.blocksV1.topic.Publish(ctx, out)
 	}
 }

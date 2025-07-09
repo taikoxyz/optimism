@@ -428,109 +428,111 @@ func TestMarshalUnmarshalWithdrawals(t *testing.T) {
 		})
 	}
 }
-
 func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 	hash := common.HexToHash("0x123")
 
 	zero := uint64(0)
-	validInput := &ExecutionPayloadEnvelope{
-		ParentBeaconBlockRoot: &hash,
-		ExecutionPayload:      createPayloadWithWithdrawals(&types.Withdrawals{}),
+	// base payload factory
+	makePayload := func() *ExecutionPayload {
+		p := createPayloadWithWithdrawals(&types.Withdrawals{})
+		p.ExcessBlobGas = (*Uint64Quantity)(&zero)
+		p.BlobGasUsed = (*Uint64Quantity)(&zero)
+		return p
 	}
 
-	validInput.ExecutionPayload.ExcessBlobGas = (*Uint64Quantity)(&zero)
-	validInput.ExecutionPayload.BlobGasUsed = (*Uint64Quantity)(&zero)
+	// prepare a dummy 65-byte signature
+	var dummySig [65]byte
+	for i := range dummySig {
+		dummySig[i] = byte(i)
+	}
 
-	// CHANGE(taiko): add EndOfSequencing marker for test
+	validInput := &ExecutionPayloadEnvelope{
+		ParentBeaconBlockRoot: &hash,
+		ExecutionPayload:      makePayload(),
+	}
+
 	endOfSequencing := true
 	notEndOfSequencing := false
 	isForcedInclusion := true
 	isNotForcedInclusion := false
+
 	validInputWithEndOfSequencingMarker := &ExecutionPayloadEnvelope{
 		ParentBeaconBlockRoot: &hash,
-		ExecutionPayload:      createPayloadWithWithdrawals(&types.Withdrawals{}),
+		ExecutionPayload:      makePayload(),
 		EndOfSequencing:       &endOfSequencing,
 		IsForcedInclusion:     &isNotForcedInclusion,
 	}
 
-	validInputWithEndOfSequencingMarker.ExecutionPayload.ExcessBlobGas = (*Uint64Quantity)(&zero)
-	validInputWithEndOfSequencingMarker.ExecutionPayload.BlobGasUsed = (*Uint64Quantity)(&zero)
-
 	validInputWithIsForcedInclusionMarker := &ExecutionPayloadEnvelope{
 		ParentBeaconBlockRoot: &hash,
-		ExecutionPayload:      createPayloadWithWithdrawals(&types.Withdrawals{}),
+		ExecutionPayload:      makePayload(),
 		EndOfSequencing:       &notEndOfSequencing,
 		IsForcedInclusion:     &isForcedInclusion,
 	}
 
-	validInputWithIsForcedInclusionMarker.ExecutionPayload.ExcessBlobGas = (*Uint64Quantity)(&zero)
-	validInputWithIsForcedInclusionMarker.ExecutionPayload.BlobGasUsed = (*Uint64Quantity)(&zero)
-
 	validInputWithBothMarkers := &ExecutionPayloadEnvelope{
 		ParentBeaconBlockRoot: &hash,
-		ExecutionPayload:      createPayloadWithWithdrawals(&types.Withdrawals{}),
+		ExecutionPayload:      makePayload(),
 		EndOfSequencing:       &endOfSequencing,
 		IsForcedInclusion:     &isForcedInclusion,
 	}
 
-	validInputWithBothMarkers.ExecutionPayload.ExcessBlobGas = (*Uint64Quantity)(&zero)
-	validInputWithBothMarkers.ExecutionPayload.BlobGasUsed = (*Uint64Quantity)(&zero)
+	// test case with a pre-populated signature
+	validInputWithSignature := &ExecutionPayloadEnvelope{
+		ParentBeaconBlockRoot: &hash,
+		ExecutionPayload:      makePayload(),
+		Signature:             &dummySig,
+	}
 
 	missingExecutionPayload := &ExecutionPayloadEnvelope{
 		ParentBeaconBlockRoot: &hash,
 		ExecutionPayload:      nil,
 	}
 
-	wantEndOfSequencing := true
-
-	wantForcedInclusion := true // CHANGE(taiko): add IFI marker test
+	wantEOS := true
 
 	tests := []struct {
 		name                  string
 		input                 *ExecutionPayloadEnvelope
-		wantEndOfSequencing   *bool // CHANGE(taiko): add EOS marker test
-		wantIsForcedInclusion *bool // CHANGE(taiko): add IFI marker test
+		wantEndOfSequencing   *bool
+		wantIsForcedInclusion *bool
+		wantSignature         *[65]byte
 		err                   error
 	}{
-		{"ValidInputSucceeds", validInput, nil, nil, nil},
-		{"ValidInputSucceedsWithEndOfSequencingMarker", validInputWithEndOfSequencingMarker, &wantEndOfSequencing, nil, nil},   // CHANGE(taiko): add test for EOS marker
-		{"ValidInputSucceedsWithForcedInclusionMarker", validInputWithIsForcedInclusionMarker, nil, &wantForcedInclusion, nil}, // CHANGE(taiko): add test for EOS marker
-		{"ValidInputSucceedsWithBothMarkers", validInputWithBothMarkers, &wantEndOfSequencing, &wantForcedInclusion, nil},      // CHANGE(taiko): add test for EOS marker
-		{"MissingExecutionDataFailsToSerialize", missingExecutionPayload, nil, nil, ErrMissingData},
+		{"NoMarkers_NoSig", validInput, nil, nil, nil, nil},
+		{"EndOfSequencingOnly", validInputWithEndOfSequencingMarker, &wantEOS, nil, nil, nil},
+		{"ForcedInclusionOnly", validInputWithIsForcedInclusionMarker, nil, &isForcedInclusion, nil, nil},
+		{"BothMarkers_NoSig", validInputWithBothMarkers, &wantEOS, &isForcedInclusion, nil, nil},
+		{"PrePopulatedSignature", validInputWithSignature, nil, nil, &dummySig, nil},
+		{"MissingExecutionPayload", missingExecutionPayload, nil, nil, nil, ErrMissingData},
 	}
 
-	for _, test := range tests {
-		t.Run(fmt.Sprintf("TestExecutionPayloadEnvelopeMarshalUnmarshal_%s", test.name), func(t *testing.T) {
-			hash := common.HexToHash("0x123")
-
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			_, err := test.input.MarshalSSZ(&buf)
-
-			if test.err != nil {
-				require.ErrorIs(t, err, test.err)
+			_, err := tc.input.MarshalSSZ(&buf)
+			if tc.err != nil {
+				require.ErrorIs(t, err, tc.err)
 				return
-			} else {
-				require.NoError(t, err)
 			}
-
-			data := buf.Bytes()
-
-			output := &ExecutionPayloadEnvelope{}
-			err = output.UnmarshalSSZ(uint32(len(data)), bytes.NewReader(data))
-
 			require.NoError(t, err)
 
+			data := buf.Bytes()
+			output := &ExecutionPayloadEnvelope{}
+			require.NoError(t, output.UnmarshalSSZ(uint32(len(data)), bytes.NewReader(data)))
+
+			// flags & root
 			require.NotNil(t, output.ParentBeaconBlockRoot)
 			assert.Equal(t, hash, *output.ParentBeaconBlockRoot)
+			assert.Equal(t, tc.wantEndOfSequencing, output.EndOfSequencing)
+			assert.Equal(t, tc.wantIsForcedInclusion, output.IsForcedInclusion)
 
-			// CHANGE(taiko): assertion for EOS
-			assert.Equal(t, test.wantEndOfSequencing, output.EndOfSequencing)
-			assert.Equal(t, test.wantIsForcedInclusion, output.IsForcedInclusion)
-
+			// payload round-trip
 			require.NotNil(t, output.ExecutionPayload)
-			if diff := cmp.Diff(*test.input.ExecutionPayload, *output.ExecutionPayload); diff != "" {
-				t.Fatalf("The data did not round trip correctly:\n%s", diff)
-			}
+			assert.Empty(t, cmp.Diff(*tc.input.ExecutionPayload, *output.ExecutionPayload))
+
+			// signature round-trip
+			assert.Equal(t, tc.wantSignature, output.Signature)
 		})
 	}
 }
