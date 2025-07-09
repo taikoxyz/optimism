@@ -449,59 +449,59 @@ func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader
 		return fmt.Errorf("scope (%d) smaller than header size (%d)", scope, hdrSize)
 	}
 
-	// --- 1) flags ---
+	// 1) read the two flag bytes…
 	var flags [2]byte
 	if _, err := io.ReadFull(r, flags[:]); err != nil {
 		return fmt.Errorf("read flags: %w", err)
 	}
-	if flags[0] == 1 {
+	if flags[0]&0x01 != 0 {
 		t := true
 		envelope.EndOfSequencing = &t
-	} else {
-		envelope.EndOfSequencing = nil
 	}
-	if flags[1] == 1 {
+	if flags[1]&0x01 != 0 {
 		f := true
 		envelope.IsForcedInclusion = &f
-	} else {
-		envelope.IsForcedInclusion = nil
 	}
+	hasSig := flags[1]&0x02 != 0
 
-	// --- 2) parentBeaconBlockRoot ---
+	// 2) read the 32-byte root
 	var root common.Hash
 	if _, err := io.ReadFull(r, root[:]); err != nil {
 		return fmt.Errorf("read parentBeaconBlockRoot: %w", err)
 	}
 	envelope.ParentBeaconBlockRoot = &root
 
-	// --- 3) figure out if there's a signature ---
-	var payloadScope uint32
-	hasSig := false
-
-	// if total length allows room for a 65-byte signature, treat that as present
-	if scope >= hdrSize+signatureLength {
-		hasSig = true
-		payloadScope = scope - hdrSize - signatureLength
-	} else {
-		payloadScope = scope - hdrSize
+	// 3) carve out the payload’s byte-length
+	payloadScope := scope - hdrSize
+	if hasSig {
+		payloadScope -= signatureLength
 	}
 
-	// --- 5) read the ExecutionPayload itself ---
+	// 4) auto-detect V1 vs V2 vs V3 by the fixed-part size
+	var version BlockVersion
+	switch {
+	case payloadScope >= executionPayloadFixedPart(BlockV3):
+		version = BlockV3
+	case payloadScope >= executionPayloadFixedPart(BlockV2):
+		version = BlockV2
+	default:
+		version = BlockV1
+	}
+
+	// 5) decode the payload
 	payload := new(ExecutionPayload)
-	if err := payload.UnmarshalSSZ(BlockV1, payloadScope, r); err != nil {
+	if err := payload.UnmarshalSSZ(version, payloadScope, r); err != nil {
 		return fmt.Errorf("decode payload: %w", err)
 	}
 	envelope.ExecutionPayload = payload
 
-	// --- 6) read the optional signature ---
+	// 6) if there _was_ a signature bit, read exactly 65 more bytes
 	if hasSig {
-		var sigArr [signatureLength]byte
-		if _, err := io.ReadFull(r, sigArr[:]); err != nil {
+		var sig [signatureLength]byte
+		if _, err := io.ReadFull(r, sig[:]); err != nil {
 			return fmt.Errorf("read signature: %w", err)
 		}
-		envelope.Signature = &sigArr
-	} else {
-		envelope.Signature = nil
+		envelope.Signature = &sig
 	}
 
 	return nil
@@ -510,18 +510,22 @@ func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader
 // change(taiko):
 // MarshalSSZ writes 1B flag + 32B root + payload + signature
 func (envelope *ExecutionPayloadEnvelope) MarshalSSZ(w io.Writer) (n int, err error) {
-	// must have a payload to sign
+	// 0) guard against nil payload
 	if envelope.ExecutionPayload == nil {
 		return 0, ErrMissingData
 	}
 
-	// --- 1) flags ---
+	// (1) build your 2 flag bytes
 	var flags [2]byte
 	if envelope.EndOfSequencing != nil && *envelope.EndOfSequencing {
-		flags[0] = 1
+		flags[0] |= 0x01
 	}
 	if envelope.IsForcedInclusion != nil && *envelope.IsForcedInclusion {
-		flags[1] = 1
+		flags[1] |= 0x01
+	}
+	// **new**: third bit = signature present
+	if envelope.Signature != nil {
+		flags[1] |= 0x02
 	}
 	m, err := w.Write(flags[:])
 	n += m
@@ -529,7 +533,7 @@ func (envelope *ExecutionPayloadEnvelope) MarshalSSZ(w io.Writer) (n int, err er
 		return n, fmt.Errorf("write flags: %w", err)
 	}
 
-	// --- 2) parentBeaconBlockRoot ---
+	// (2) write the parentBeaconBlockRoot
 	var root common.Hash
 	if envelope.ParentBeaconBlockRoot != nil {
 		root = *envelope.ParentBeaconBlockRoot
@@ -540,18 +544,17 @@ func (envelope *ExecutionPayloadEnvelope) MarshalSSZ(w io.Writer) (n int, err er
 		return n, fmt.Errorf("write parentBeaconBlockRoot: %w", err)
 	}
 
-	// --- 3) execution payload ---
+	// (3) payload
 	m, err = envelope.ExecutionPayload.MarshalSSZ(w)
 	n += m
 	if err != nil {
 		return n, err
 	}
 
-	// --- 4) optional signature ---
+	// (4) optional signature
 	if envelope.Signature != nil {
-		// signature must be exactly 65 bytes
-		m2, err := w.Write(envelope.Signature[:])
-		n += m2
+		m, err = w.Write(envelope.Signature[:])
+		n += m
 		if err != nil {
 			return n, fmt.Errorf("write signature: %w", err)
 		}
