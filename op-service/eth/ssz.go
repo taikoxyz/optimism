@@ -438,23 +438,31 @@ func unmarshalTransactions(in []byte) (txs []Data, err error) {
 }
 
 // change(taiko):
-// UnmarshalSSZ reads 1B flag → nil/true, then root, then payload…
+// UnmarshalSSZ reads 2B flags → nil/true, then root, then payload…
 func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader) error {
-	const hdr = 1 + common.HashLength
+	const hdr = 2 + common.HashLength
 	if scope < hdr {
 		return fmt.Errorf("scope too small: %d, must be at least %d (1 + common.HashLength)", scope, hdr)
 	}
 
 	// CHANGE(taiko0: read the flag for EndOfSequencing)
-	var flag [1]byte
-	if _, err := io.ReadFull(r, flag[:]); err != nil {
-		return fmt.Errorf("read endOfSequencing: %w", err)
+	// 1st flag: EndOfSequencing
+	var buf [2]byte
+	if _, err := io.ReadFull(r, buf[:]); err != nil {
+		return fmt.Errorf("read flags: %w", err)
 	}
-	if flag[0] == 1 {
+	if buf[0] == 1 {
 		t := true
 		envelope.EndOfSequencing = &t
 	} else {
 		envelope.EndOfSequencing = nil
+	}
+	// 2nd flag: IsForcedInclusion
+	if buf[1] == 1 {
+		f := true
+		envelope.IsForcedInclusion = &f
+	} else {
+		envelope.IsForcedInclusion = nil
 	}
 
 	// CHANGE(taiko): always read the parent beacon block root, default to zero
@@ -466,7 +474,7 @@ func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader
 
 	payloadScope := scope - hdr
 	payload := new(ExecutionPayload)
-	if err := payload.UnmarshalSSZ(BlockV1, payloadScope, r); err != nil {
+	if err := payload.UnmarshalSSZ(BlockV3, payloadScope, r); err != nil {
 		return err
 	}
 	envelope.ExecutionPayload = payload
@@ -483,29 +491,35 @@ func (envelope *ExecutionPayloadEnvelope) MarshalSSZ(w io.Writer) (n int, err er
 		return 0, ErrMissingData
 	}
 
-	// CHANGE(taiko): write the flag for EndOfSequencing
-	flag := byte(0)
+	// CHANGE(taiko): detect flags
+	flags := []byte{0, 0}
 	if envelope.EndOfSequencing != nil && *envelope.EndOfSequencing {
-		flag = 1
+		flags[0] = 1
 	}
-	if _, err := w.Write([]byte{flag}); err != nil {
-		return 0, fmt.Errorf("write endOfSequencing: %w", err)
+	if envelope.IsForcedInclusion != nil && *envelope.IsForcedInclusion {
+		flags[1] = 1
 	}
-	n = 1
 
-	// change(taiko): allow parent beacon block root to be unset, use default
-	// Write 32B beacon-root (zero if unset)
+	// write both flags
+	m, err := w.Write(flags)
+	if err != nil || m != 2 {
+		return 0, fmt.Errorf("write flags: %w", err)
+	}
+
+	n = m
+
+	// write beacon‐root (zeroed if nil)
 	var root common.Hash
 	if envelope.ParentBeaconBlockRoot != nil {
 		root = *envelope.ParentBeaconBlockRoot
 	}
-	m, err := w.Write(root[:])
+	m, err = w.Write(root[:])
 	if err != nil || m != common.HashLength {
 		return n, fmt.Errorf("write parentBeaconBlockRoot: %w", err)
 	}
 	n += m
 
-	// write payload
+	// then delegate to payload
 	m, err = envelope.ExecutionPayload.MarshalSSZ(w)
 	return n + m, err
 }

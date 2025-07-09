@@ -443,14 +443,38 @@ func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 
 	// CHANGE(taiko): add EndOfSequencing marker for test
 	endOfSequencing := true
+	notEndOfSequencing := false
+	isForcedInclusion := true
+	isNotForcedInclusion := false
 	validInputWithEndOfSequencingMarker := &ExecutionPayloadEnvelope{
 		ParentBeaconBlockRoot: &hash,
 		ExecutionPayload:      createPayloadWithWithdrawals(&types.Withdrawals{}),
 		EndOfSequencing:       &endOfSequencing,
+		IsForcedInclusion:     &isNotForcedInclusion,
 	}
 
 	validInputWithEndOfSequencingMarker.ExecutionPayload.ExcessBlobGas = (*Uint64Quantity)(&zero)
 	validInputWithEndOfSequencingMarker.ExecutionPayload.BlobGasUsed = (*Uint64Quantity)(&zero)
+
+	validInputWithIsForcedInclusionMarker := &ExecutionPayloadEnvelope{
+		ParentBeaconBlockRoot: &hash,
+		ExecutionPayload:      createPayloadWithWithdrawals(&types.Withdrawals{}),
+		EndOfSequencing:       &notEndOfSequencing,
+		IsForcedInclusion:     &isForcedInclusion,
+	}
+
+	validInputWithIsForcedInclusionMarker.ExecutionPayload.ExcessBlobGas = (*Uint64Quantity)(&zero)
+	validInputWithIsForcedInclusionMarker.ExecutionPayload.BlobGasUsed = (*Uint64Quantity)(&zero)
+
+	validInputWithBothMarkers := &ExecutionPayloadEnvelope{
+		ParentBeaconBlockRoot: &hash,
+		ExecutionPayload:      createPayloadWithWithdrawals(&types.Withdrawals{}),
+		EndOfSequencing:       &endOfSequencing,
+		IsForcedInclusion:     &isForcedInclusion,
+	}
+
+	validInputWithBothMarkers.ExecutionPayload.ExcessBlobGas = (*Uint64Quantity)(&zero)
+	validInputWithBothMarkers.ExecutionPayload.BlobGasUsed = (*Uint64Quantity)(&zero)
 
 	missingExecutionPayload := &ExecutionPayloadEnvelope{
 		ParentBeaconBlockRoot: &hash,
@@ -459,20 +483,23 @@ func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 
 	wantEndOfSequencing := true
 
+	wantForcedInclusion := true // CHANGE(taiko): add IFI marker test
+
 	tests := []struct {
-		name                string
-		input               *ExecutionPayloadEnvelope
-		wantEndOfSequencing *bool
-		err                 error
+		name                  string
+		input                 *ExecutionPayloadEnvelope
+		wantEndOfSequencing   *bool // CHANGE(taiko): add EOS marker test
+		wantIsForcedInclusion *bool // CHANGE(taiko): add IFI marker test
+		err                   error
 	}{
-		{"ValidInputSucceeds", validInput, nil, nil},
-		{"ValidInputSucceedsWithEndOfSequencingMarker", validInputWithEndOfSequencingMarker, &wantEndOfSequencing, nil}, // CHANGE(taiko): add test for EOS marker
-		{"MissingExecutionDataFailsToSerialize", missingExecutionPayload, nil, ErrMissingData},
+		{"ValidInputSucceeds", validInput, nil, nil, nil},
+		{"ValidInputSucceedsWithEndOfSequencingMarker", validInputWithEndOfSequencingMarker, &wantEndOfSequencing, nil, nil},   // CHANGE(taiko): add test for EOS marker
+		{"ValidInputSucceedsWithForcedInclusionMarker", validInputWithIsForcedInclusionMarker, nil, &wantForcedInclusion, nil}, // CHANGE(taiko): add test for EOS marker
+		{"ValidInputSucceedsWithBothMarkers", validInputWithBothMarkers, &wantEndOfSequencing, &wantForcedInclusion, nil},      // CHANGE(taiko): add test for EOS marker
+		{"MissingExecutionDataFailsToSerialize", missingExecutionPayload, nil, nil, ErrMissingData},
 	}
 
 	for _, test := range tests {
-		test := test
-
 		t.Run(fmt.Sprintf("TestExecutionPayloadEnvelopeMarshalUnmarshal_%s", test.name), func(t *testing.T) {
 			hash := common.HexToHash("0x123")
 
@@ -498,6 +525,7 @@ func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 
 			// CHANGE(taiko): assertion for EOS
 			assert.Equal(t, test.wantEndOfSequencing, output.EndOfSequencing)
+			assert.Equal(t, test.wantIsForcedInclusion, output.IsForcedInclusion)
 
 			require.NotNil(t, output.ExecutionPayload)
 			if diff := cmp.Diff(*test.input.ExecutionPayload, *output.ExecutionPayload); diff != "" {
