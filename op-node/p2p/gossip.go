@@ -470,20 +470,35 @@ func BuildPreconfBlocksResponseValidator(log log.Logger, cfg *rollup.Config, run
 			*res = data[:cap(data)]
 		}
 
-		// message starts with compact-encoding secp256k1 encoded signature
-		signatureBytes, payloadBytes := data[:65], data[65:]
+		// message starts with compact-encoding secp256k1 encoded signature. we can ignore this here.
+		// we dont care who signed the message, we just care that the envelope.Signature is a valid
+		// sequencer originally.
+		payloadBytes := data[65:]
 
-		// [REJECT] if the signature by the sequencer is not valid
-		result := verifyBlockResponseSignature(log, cfg, runCfg, id, signatureBytes, payloadBytes)
-		if result == pubsub.ValidationReject {
-			return result
-		}
-
-		// decode full envelope (1B flag + 32B root + payload…)
+		// decode full envelope early
 		var envelope eth.ExecutionPayloadEnvelope
 		if err := envelope.UnmarshalSSZ(uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
 			log.Warn("invalid envelope payload", "err", err, "peer", id)
 			return pubsub.ValidationReject
+		}
+
+		// gotta have the sequencer’s signature inside the envelope or we have nothing to verify.
+		if envelope.Signature == nil {
+			log.Warn("missing envelope signature", "peer", id)
+			return pubsub.ValidationReject
+		}
+
+		// envelope.Signature is a *[65]byte
+		sigBytes := envelope.Signature[:]
+
+		// pull the last 65 bytes off payloadBytes to get the signed portion
+		signedLen := len(payloadBytes) - expectedSigLen
+		signedBytes := payloadBytes[:signedLen]
+
+		// [REJECT] if the signature by the sequencer is not valid
+		result := verifyBlockResponseSignature(log, cfg, runCfg, id, sigBytes, signedBytes)
+		if result == pubsub.ValidationReject {
+			return result
 		}
 
 		payload := envelope.ExecutionPayload
