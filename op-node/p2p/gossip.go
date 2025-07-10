@@ -1029,15 +1029,8 @@ func (p *publisher) PublishL2RequestResponse(ctx context.Context, envelope *eth.
 	}
 
 	data := buf.Bytes()
-	payloadData := data[65:]
-	sig, err := signer.Sign(ctx, SigningDomainBlocksV1, p.cfg.L2ChainID, payloadData)
-	if err != nil {
-		return fmt.Errorf("failed to sign execution payload with signer: %w", err)
-	}
-	copy(data[:65], sig[:])
 
-	// compress the full message
-	// This also copies the data, freeing up the original buffer to go back into the pool
+	// compress the full message (copies data into a new slice)
 	out := snappy.Encode(nil, data)
 
 	return p.preconfBlocksResponse.topic.Publish(ctx, out)
