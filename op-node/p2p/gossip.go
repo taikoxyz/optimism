@@ -330,104 +330,100 @@ func (sh *seenHashes) markSeen(h common.Hash) {
 }
 
 // CHANGE(taiko): add preconfBlocks topic validator
-func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig, blockVersion eth.BlockVersion) pubsub.ValidatorEx {
+func BuildPreconfBlocksValidator(
+	logger log.Logger,
+	cfg *rollup.Config,
+	runCfg GossipRuntimeConfig,
+	blockVersion eth.BlockVersion,
+) pubsub.ValidatorEx {
 	// Seen block hashes per block height
-	// uint64 -> *seenBlocks
-	preconfblockLRU, err := lru.New[uint64, *seenBlocks](defaultLRUCacheSize)
+	preconfLRU, err := lru.New[uint64, *seenBlocks](defaultLRUCacheSize)
 	if err != nil {
 		panic(fmt.Errorf("failed to set up block height LRU cache: %w", err))
 	}
 
 	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
-		// [REJECT] if the compression is not valid
+		// 1) Snappy length sanity checks
 		outLen, err := snappy.DecodedLen(message.Data)
 		if err != nil {
-			log.Warn("invalid snappy compression length data", "err", err, "peer", id)
+			logger.Warn("invalid snappy compression length data", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
 		if outLen > maxGossipSize {
-			log.Warn("possible snappy zip bomb, decoded length is too large", "decoded_length", outLen, "peer", id)
+			logger.Warn("possible snappy zip bomb", "decoded_length", outLen, "peer", id)
 			return pubsub.ValidationReject
 		}
 		if outLen < minGossipSize {
-			log.Warn("rejecting undersized gossip payload")
+			logger.Warn("undersized gossip payload", "peer", id)
 			return pubsub.ValidationReject
 		}
 
-		res := msgBufPool.Get().(*[]byte)
-		defer msgBufPool.Put(res)
-		data, err := snappy.Decode((*res)[:cap(*res)], message.Data)
+		// 2) Snappy‐decode into pooled buffer
+		bufPtr := msgBufPool.Get().(*[]byte)
+		defer msgBufPool.Put(bufPtr)
+		data, err := snappy.Decode((*bufPtr)[:cap(*bufPtr)], message.Data)
 		if err != nil {
-			log.Warn("invalid snappy compression", "err", err, "peer", id)
+			logger.Warn("snappy decode failed", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
-		// if we ended up growing the slice capacity, fine, keep the larger one.
-		if cap(data) > cap(*res) {
-			*res = data[:cap(data)]
+		if cap(data) > cap(*bufPtr) {
+			*bufPtr = data[:cap(data)]
 		}
 
-		// message starts with compact-encoding secp256k1 encoded signature
-		signatureBytes, payloadBytes := data[:65], data[65:]
-
-		// [REJECT] if the signature by the sequencer is not valid
-		result := verifyBlockSignature(log, cfg, runCfg, id, signatureBytes, payloadBytes)
-		if result == pubsub.ValidationReject {
-			return result
-		}
-
+		// 3) Unmarshal the full SSZ envelope (flags + root + payload + signature)
 		var envelope eth.ExecutionPayloadEnvelope
-		// hdr = 1 byte flag + 32 byte root, then payload
-		if err := envelope.UnmarshalSSZ(uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
-			log.Warn("invalid envelope payload", "err", err, "peer", id)
+		if err := envelope.UnmarshalSSZ(uint32(len(data)), bytes.NewReader(data)); err != nil {
+			logger.Warn("invalid envelope payload", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
 
+		// 4) Must carry the sequencer’s signature inside the envelope
+		if envelope.Signature == nil {
+			logger.Warn("missing envelope signature", "peer", id)
+			return pubsub.ValidationReject
+		}
+
+		// 5) Split off the signature and verify it over the preceding bytes
+		sigBytes := envelope.Signature[:] // last 65 bytes
+		signedLen := len(data) - expectedSigLen
+		signedBytes := data[:signedLen] // everything before the 65-byte trailer
+		if res := verifyBlockResponseSignature(logger, cfg, runCfg, id, sigBytes, signedBytes); res != pubsub.ValidationAccept {
+			return res
+		}
+
+		// 6) Sanity‐check the inner payload
 		payload := envelope.ExecutionPayload
-
-		// [REJECT] if the `payload` is null
 		if payload == nil {
-			log.Warn("payload is empty", "peer", id)
+			logger.Warn("payload is empty", "peer", id)
 			return pubsub.ValidationReject
 		}
-		// [REJECT] if the `payload.Transactions` is null or empty
 		if len(payload.Transactions) == 0 {
-			log.Warn("payload has empty transaction data", "peer", id)
+			logger.Warn("payload has empty transaction data", "peer", id)
 			return pubsub.ValidationReject
 		}
-
-		// [REJECT] if the `coinbase` in the `payload` is empty
 		if payload.FeeRecipient == (common.Address{}) {
-			log.Warn("empty coinbase in payload", "peer", id)
+			logger.Warn("empty coinbase in payload", "peer", id)
 			return pubsub.ValidationReject
 		}
-
-		// [REJECT] if the `blockParams.blockID` is zero
 		if payload.BlockNumber == 0 {
-			log.Warn("payload has zero block ID", "peer", id)
+			logger.Warn("payload has zero block ID", "peer", id)
 			return pubsub.ValidationReject
 		}
 
-		seen, ok := preconfblockLRU.Get(uint64(payload.BlockNumber))
+		// 7) Deduplicate by block number + hash
+		height := uint64(payload.BlockNumber)
+		seen, ok := preconfLRU.Get(height)
 		if !ok {
 			seen = new(seenBlocks)
-			preconfblockLRU.Add(uint64(payload.BlockNumber), seen)
+			preconfLRU.Add(height, seen)
 		}
-
-		if count, hasSeen := seen.hasSeen(payload.BlockHash); count > 5 {
-			// [REJECT] if more than 5 blocks have been seen with the same block height
-			log.Warn("seen too many different blocks at same height", "height", payload.BlockNumber)
-			return pubsub.ValidationReject
-		} else if hasSeen {
-			// [IGNORE] if the block has already been seen
-			log.Warn("validated already seen message again")
+		if count, _ := seen.hasSeen(payload.BlockHash); count > 10 {
+			logger.Warn("seen same block hash too many times", "height", payload.BlockNumber)
 			return pubsub.ValidationIgnore
 		}
-
-		// mark it as seen. (note: with concurrent validation more than 5 preconf blocks may be marked as seen still,
-		// but validator concurrency is limited anyway)
 		seen.markSeen(payload.BlockHash)
 
-		// remember the decoded payload for later usage in topic subscriber.
+		// 8) All good—stash the decoded envelope and accept
 		message.ValidatorData = &envelope
 		return pubsub.ValidationAccept
 	}
