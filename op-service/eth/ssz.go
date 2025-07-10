@@ -443,7 +443,7 @@ func unmarshalTransactions(in []byte) (txs []Data, err error) {
 }
 
 // change(taiko):
-// UnmarshalSSZ reads 2B flags → nil/true, then root, then payload…
+// UnmarshalSSZ reads 2B flags → nil/true, then root, then payload, then sig
 func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader) error {
 	if scope < hdrSize {
 		return fmt.Errorf("scope (%d) smaller than header size (%d)", scope, hdrSize)
