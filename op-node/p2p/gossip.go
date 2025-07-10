@@ -473,7 +473,7 @@ func BuildPreconfBlocksResponseValidator(log log.Logger, cfg *rollup.Config, run
 		// message starts with compact-encoding secp256k1 encoded signature. we can ignore this here.
 		// we dont care who signed the message, we just care that the envelope.Signature is a valid
 		// sequencer originally.
-		payloadBytes := data[65:]
+		payloadBytes := data
 
 		// decode full envelope early
 		var envelope eth.ExecutionPayloadEnvelope
