@@ -1028,6 +1028,8 @@ func (p *publisher) PublishL2RequestResponse(ctx context.Context, envelope *eth.
 		return fmt.Errorf("failed to encode execution payload envelope to publish: %w", err)
 	}
 
+	// remove signing, Signer can be nil here now.
+	// anyone can propagate blocks but the envelope.Signature will be read instead.
 	data := buf.Bytes()
 
 	// compress the full message (copies data into a new slice)
