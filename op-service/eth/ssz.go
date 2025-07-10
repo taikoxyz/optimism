@@ -508,7 +508,7 @@ func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader
 }
 
 // change(taiko):
-// MarshalSSZ writes 1B flag + 32B root + payload + signature
+// MarshalSSZ writes 2B flag + 32B root + payload + signature
 func (envelope *ExecutionPayloadEnvelope) MarshalSSZ(w io.Writer) (n int, err error) {
 	// 0) guard against nil payload
 	if envelope.ExecutionPayload == nil {
