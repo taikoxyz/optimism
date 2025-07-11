@@ -330,12 +330,14 @@ func (sh *seenHashes) markSeen(h common.Hash) {
 }
 
 // CHANGE(taiko): add preconfBlocks topic validator
+// CHANGE(taiko): add preconfBlocks topic validator
 func BuildPreconfBlocksValidator(
 	logger log.Logger,
 	cfg *rollup.Config,
 	runCfg GossipRuntimeConfig,
 	blockVersion eth.BlockVersion,
 ) pubsub.ValidatorEx {
+	// Seen block hashes per block height
 	preconfLRU, err := lru.New[uint64, *seenBlocks](defaultLRUCacheSize)
 	if err != nil {
 		panic(fmt.Errorf("failed to set up block height LRU cache: %w", err))
@@ -357,7 +359,7 @@ func BuildPreconfBlocksValidator(
 			return pubsub.ValidationReject
 		}
 
-		// 2) Snappy‐decode into pooled buffer
+		// 2) Snappy-decode into pooled buffer
 		bufPtr := msgBufPool.Get().(*[]byte)
 		defer msgBufPool.Put(bufPtr)
 		data, err := snappy.Decode((*bufPtr)[:cap(*bufPtr)], message.Data)
@@ -369,41 +371,47 @@ func BuildPreconfBlocksValidator(
 			*bufPtr = data[:cap(data)]
 		}
 
-		// ───────────────────────────────────────────────────────────
-		//   ★ Strip the 65-byte wire prefix here ★
-		// ───────────────────────────────────────────────────────────
-		sszBlob := data[expectedSigLen:] // drop data[:65]
+		// 3) Split off the wire signature prefix
+		if len(data) < expectedSigLen {
+			logger.Warn("payload too short to contain wire signature", "peer", id)
+			return pubsub.ValidationReject
+		}
 
-		// 3) Decode the envelope SSZ from sszBlob
+		signatureBytes := data[:expectedSigLen]
+		payloadBytes := data[expectedSigLen:]
+
+		// 4) Verify the sequencer’s wire signature
+		if res := verifyBlockSignature(logger, cfg, runCfg, id, signatureBytes, payloadBytes); res != pubsub.ValidationAccept {
+			return res
+		}
+
+		// 5) Now SSZ-decode the payloadBytes into the envelope
 		var envelope eth.ExecutionPayloadEnvelope
-		if err := envelope.UnmarshalSSZ(uint32(len(sszBlob)), bytes.NewReader(sszBlob)); err != nil {
+		if err := envelope.UnmarshalSSZ(uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
 			logger.Warn("invalid envelope payload", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
 
-		// 4) Must carry the sequencer’s signature inside the envelope
-		if envelope.Signature == nil {
-			logger.Warn("missing envelope signature", "peer", id)
-			return pubsub.ValidationReject
-		}
-
-		// 5) Verify that signature over the bytes before its 65-byte trailer
-		sigBytes := envelope.Signature[:] // the 65B trailer
-		signedLen := len(sszBlob) - expectedSigLen
-		signedBytes := sszBlob[:signedLen] // what the sequencer actually signed
-		if res := verifyBlockResponseSignature(logger, cfg, runCfg, id, sigBytes, signedBytes); res != pubsub.ValidationAccept {
-			return res
-		}
-
-		// 6) The rest: payload sanity checks + dedupe
+		// 6) Sanity-check the inner ExecutionPayload
 		payload := envelope.ExecutionPayload
-		if payload == nil || len(payload.Transactions) == 0 ||
-			payload.FeeRecipient == (common.Address{}) ||
-			payload.BlockNumber == 0 {
-			logger.Warn("invalid payload fields", "peer", id)
+		if payload == nil {
+			logger.Warn("payload is empty", "peer", id)
+			return pubsub.ValidationReject
+		}
+		if len(payload.Transactions) == 0 {
+			logger.Warn("payload has empty transaction data", "peer", id)
+			return pubsub.ValidationReject
+		}
+		if payload.FeeRecipient == (common.Address{}) {
+			logger.Warn("empty coinbase in payload", "peer", id)
+			return pubsub.ValidationReject
+		}
+		if payload.BlockNumber == 0 {
+			logger.Warn("payload has zero block ID", "peer", id)
 			return pubsub.ValidationReject
 		}
 
+		// 7) Deduplicate by block number + hash
 		height := uint64(payload.BlockNumber)
 		seen, ok := preconfLRU.Get(height)
 		if !ok {
@@ -411,11 +419,12 @@ func BuildPreconfBlocksValidator(
 			preconfLRU.Add(height, seen)
 		}
 		if count, _ := seen.hasSeen(payload.BlockHash); count > 10 {
-			logger.Warn("seen same block hash too many times", "height", payload.BlockNumber)
+			logger.Warn("seen same block hash too many times in preconf response", "height", payload.BlockNumber)
 			return pubsub.ValidationIgnore
 		}
 		seen.markSeen(payload.BlockHash)
 
+		// 8) All good—stash the decoded envelope for the subscriber
 		message.ValidatorData = &envelope
 		return pubsub.ValidationAccept
 	}
@@ -428,13 +437,14 @@ func BuildPreconfBlocksResponseValidator(
 	runCfg GossipRuntimeConfig,
 	blockVersion eth.BlockVersion,
 ) pubsub.ValidatorEx {
-	preconfLRU, err := lru.New[uint64, *seenBlocks](defaultLRUCacheSize)
+	// Seen block hashes per block height
+	preconfblockLRU, err := lru.New[uint64, *seenBlocks](defaultLRUCacheSize)
 	if err != nil {
 		panic(fmt.Errorf("failed to set up block height LRU cache: %w", err))
 	}
 
 	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
-		// snappy length checks…
+		// 1) Snappy‐length sanity checks
 		outLen, err := snappy.DecodedLen(message.Data)
 		if err != nil {
 			log.Warn("invalid snappy compression length data", "err", err, "peer", id)
@@ -449,56 +459,71 @@ func BuildPreconfBlocksResponseValidator(
 			return pubsub.ValidationReject
 		}
 
-		// decode
-		buf := msgBufPool.Get().(*[]byte)
-		defer msgBufPool.Put(buf)
-		data, err := snappy.Decode((*buf)[:cap(*buf)], message.Data)
+		// 2) Snappy‐decode into pooled buffer
+		bufPtr := msgBufPool.Get().(*[]byte)
+		defer msgBufPool.Put(bufPtr)
+		data, err := snappy.Decode((*bufPtr)[:cap(*bufPtr)], message.Data)
 		if err != nil {
 			log.Warn("invalid snappy compression", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
-		if cap(data) > cap(*buf) {
-			*buf = data[:cap(data)]
+		if cap(data) > cap(*bufPtr) {
+			*bufPtr = data[:cap(data)]
 		}
 
-		// **strip off the 65-byte wire signature prefix**
+		// 3) Strip off the 65-byte on-wire placeholder
+		if len(data) < expectedSigLen {
+			log.Warn("payload too short", "peer", id)
+			return pubsub.ValidationReject
+		}
 		payloadBytes := data[expectedSigLen:]
 
-		// Unmarshal SSZ envelope
+		// 4) SSZ-decode the envelope (flags + root + payload + embedded signature)
 		var envelope eth.ExecutionPayloadEnvelope
 		if err := envelope.UnmarshalSSZ(uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
 			log.Warn("invalid envelope payload", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
 
-		// must have internal signature
+		// 5) Must carry the sequencer’s embedded signature
 		if envelope.Signature == nil {
 			log.Warn("missing envelope signature", "peer", id)
 			return pubsub.ValidationReject
 		}
 
-		// verify the sequencer’s original signature
-		sigBytes := envelope.Signature[:]
+		// 6) Verify that embedded signature over its preceding SSZ bytes
+		sigBytes := envelope.Signature[:] // 65-byte trailer
 		signedLen := len(payloadBytes) - expectedSigLen
 		signedBytes := payloadBytes[:signedLen]
 		if res := verifyBlockResponseSignature(log, cfg, runCfg, id, sigBytes, signedBytes); res == pubsub.ValidationReject {
 			return res
 		}
 
-		// payload sanity checks…
+		// 7) Payload sanity checks
 		payload := envelope.ExecutionPayload
-		if payload == nil || len(payload.Transactions) == 0 ||
-			payload.FeeRecipient == (common.Address{}) ||
-			payload.BlockNumber == 0 {
-			log.Warn("invalid payload fields", "peer", id)
+		if payload == nil {
+			log.Warn("payload is empty", "peer", id)
+			return pubsub.ValidationReject
+		}
+		if len(payload.Transactions) == 0 {
+			log.Warn("payload has empty transaction data", "peer", id)
+			return pubsub.ValidationReject
+		}
+		if payload.FeeRecipient == (common.Address{}) {
+			log.Warn("empty coinbase in payload", "peer", id)
+			return pubsub.ValidationReject
+		}
+		if payload.BlockNumber == 0 {
+			log.Warn("payload has zero block ID", "peer", id)
 			return pubsub.ValidationReject
 		}
 
-		// dedupe…
-		seen, ok := preconfLRU.Get(uint64(payload.BlockNumber))
+		// 8) Deduplicate by block number + hash
+		height := uint64(payload.BlockNumber)
+		seen, ok := preconfblockLRU.Get(height)
 		if !ok {
 			seen = new(seenBlocks)
-			preconfLRU.Add(uint64(payload.BlockNumber), seen)
+			preconfblockLRU.Add(height, seen)
 		}
 		if count, _ := seen.hasSeen(payload.BlockHash); count > 10 {
 			log.Warn("seen same block hash too many times in preconf response", "height", payload.BlockNumber)
@@ -506,6 +531,7 @@ func BuildPreconfBlocksResponseValidator(
 		}
 		seen.markSeen(payload.BlockHash)
 
+		// 9) All good—stash the decoded envelope for later usage
 		message.ValidatorData = &envelope
 		return pubsub.ValidationAccept
 	}
@@ -916,14 +942,14 @@ func (p *publisher) PreconfBlocksTopicV1Peers() []peer.ID {
 }
 
 func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.ExecutionPayloadEnvelope, signer Signer) error {
-	// 1) Marshal flags+root+payload (no signature yet)
+	// 1) SSZ-marshal flags+root+payload (no signature yet)
 	var payloadBuf bytes.Buffer
 	if _, err := envelope.MarshalSSZ(&payloadBuf); err != nil {
 		return fmt.Errorf("encode envelope (no sig): %w", err)
 	}
 
 	// 2) Sign exactly those bytes
-	sig, err := signer.Sign(
+	sigBytes, err := signer.Sign(
 		ctx,
 		SigningDomainBlocksV1,
 		p.cfg.L2ChainID,
@@ -932,22 +958,22 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 	if err != nil {
 		return fmt.Errorf("sign execution payload: %w", err)
 	}
-	if len(sig) != expectedSigLen {
-		return fmt.Errorf("invalid signature length %d, want %d", len(sig), expectedSigLen)
+	if len(sigBytes) != expectedSigLen {
+		return fmt.Errorf("invalid signature length %d, want %d", len(sigBytes), expectedSigLen)
 	}
 
-	// 3) Persist into the envelope
-	envelope.Signature = sig
+	envelope.Signature = sigBytes
 
-	// 4) Re-marshal the full envelope (flags + root + payload + signature)
+	// 4) re-marshal the full envelope (flags + root + payload + signature)
 	var fullBuf bytes.Buffer
 	if _, err := envelope.MarshalSSZ(&fullBuf); err != nil {
 		return fmt.Errorf("encode envelope (with sig): %w", err)
 	}
 
-	// 5) Compress and publish
+	// 5) publish exactly as before: no extra wire-prefix step,
+	//    because here we’re on the “preconfBlocks” topic which
+	//    doesn’t use a separate wire signature.
 	out := snappy.Encode(nil, fullBuf.Bytes())
-
 	switch {
 	case p.cfg.Taiko:
 		return p.preconfBlocksV1.topic.Publish(ctx, out)
