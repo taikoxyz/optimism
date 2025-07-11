@@ -482,6 +482,9 @@ func BuildPreconfBlocksResponseValidator(
 		}
 		payloadBytes := data[expectedSigLen:]
 
+		// 🔑 clear the “signature present” bit in the flags byte
+		payloadBytes[1] &^= 0x02
+
 		// 4) SSZ-decode the envelope (flags + root + payload + embedded signature)
 		var envelope eth.ExecutionPayloadEnvelope
 		if err := envelope.UnmarshalSSZ(uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
