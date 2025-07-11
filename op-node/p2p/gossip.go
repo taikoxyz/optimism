@@ -485,31 +485,25 @@ func BuildPreconfBlocksResponseValidator(
 			*bufPtr = data[:cap(data)]
 		}
 
-		// 3) Strip off the 65-byte on-wire placeholder
-		if len(data) < expectedSigLen {
-			log.Warn("payload too short", "peer", id)
-			return pubsub.ValidationReject
-		}
-		payloadBytes := data[expectedSigLen:]
+		// 3) no more front‐of‐message chop
+		payloadBytes := data // the full SSZ envelope
 
-		// 4) SSZ-decode the envelope (flags + root + payload + embedded signature)
+		// 4) SSZ‐decode flags+root+payload+embedded signature
 		var envelope eth.ExecutionPayloadEnvelope
 		if err := envelope.UnmarshalSSZ(uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
 			log.Warn("invalid envelope payload", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
 
-		// 5) Must carry the sequencer’s embedded signature
+		// 5) must have that embedded 65B signature
 		if envelope.Signature == nil {
 			log.Warn("missing envelope signature", "peer", id)
 			return pubsub.ValidationReject
 		}
-
-		// 6) Verify that embedded signature over its preceding SSZ bytes
-		sigBytes := envelope.Signature[:] // 65-byte trailer
-		signedLen := len(payloadBytes) - expectedSigLen
-		signedBytes := payloadBytes[:signedLen]
-		signedBytes[1] &^= 0x02
+		// 6) carve the embedded sig off the _end_ and verify:
+		sigBytes := envelope.Signature[:]                              // trailer
+		signedBytes := payloadBytes[:len(payloadBytes)-expectedSigLen] // leading flags+root+payload
+		signedBytes[1] &^= 0x02                                        // clear sig‐present bit
 		if res := verifyBlockResponseSignature(log, cfg, runCfg, id, sigBytes, signedBytes); res == pubsub.ValidationReject {
 			return res
 		}
