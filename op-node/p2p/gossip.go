@@ -346,15 +346,15 @@ func BuildPreconfBlocksValidator(
 		// 1) Snappy length sanity checks
 		outLen, err := snappy.DecodedLen(message.Data)
 		if err != nil {
-			logger.Warn("invalid snappy compression length data", "err", err, "peer", id)
+			log.Warn("invalid snappy compression length data", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
 		if outLen > maxGossipSize {
-			logger.Warn("possible snappy zip bomb", "decoded_length", outLen, "peer", id)
+			log.Warn("possible snappy zip bomb", "decoded_length", outLen, "peer", id)
 			return pubsub.ValidationReject
 		}
 		if outLen < minGossipSize {
-			logger.Warn("undersized gossip payload", "peer", id)
+			log.Warn("undersized gossip payload", "peer", id)
 			return pubsub.ValidationReject
 		}
 
@@ -376,12 +376,22 @@ func BuildPreconfBlocksValidator(
 			return pubsub.ValidationReject
 		}
 
+		// data == full wire blob: [65-byte wire sig][flags+root+payload+envelopeSig]
+		payloadBytes := data[expectedSigLen:]
+
+		// carve off the envelopeSig to get the “signed” region
+		signedLen := len(payloadBytes) - expectedSigLen
+
+		orig := payloadBytes[:signedLen]
+
 		signatureBytes, payloadBytes := data[:expectedSigLen], data[expectedSigLen:]
 
-		signedPayloadBytes := payloadBytes[:len(payloadBytes)-expectedSigLen]
+		// alloc a fresh slice and copy into it
+		signedPayloadBytes := make([]byte, signedLen)
 
-		copy(signedPayloadBytes, payloadBytes[:len(payloadBytes)-expectedSigLen])
-		// clear the "signature present" bit (0x02) in the flags byte:
+		copy(signedPayloadBytes, orig)
+
+		// now clear the “signature-present” bit
 		signedPayloadBytes[1] &^= 0x02
 
 		// 4) Verify the sequencer’s wire signature
