@@ -376,9 +376,13 @@ func BuildPreconfBlocksValidator(
 			return pubsub.ValidationReject
 		}
 
-		signatureBytes, payloadBytes := data[:65], data[65:]
+		signatureBytes, payloadBytes := data[:expectedSigLen], data[expectedSigLen:]
 
 		signedPayloadBytes := payloadBytes[:len(payloadBytes)-expectedSigLen]
+
+		copy(signedPayloadBytes, payloadBytes[:len(payloadBytes)-expectedSigLen])
+		// clear the "signature present" bit (0x02) in the flags byte:
+		signedPayloadBytes[1] &^= 0x02
 
 		// 4) Verify the sequencer’s wire signature
 		if res := verifyBlockSignature(logger, cfg, runCfg, id, signatureBytes, signedPayloadBytes); res != pubsub.ValidationAccept {
