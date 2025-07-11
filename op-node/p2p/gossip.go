@@ -330,7 +330,6 @@ func (sh *seenHashes) markSeen(h common.Hash) {
 }
 
 // CHANGE(taiko): add preconfBlocks topic validator
-// CHANGE(taiko): add preconfBlocks topic validator
 func BuildPreconfBlocksValidator(
 	logger log.Logger,
 	cfg *rollup.Config,
@@ -377,11 +376,12 @@ func BuildPreconfBlocksValidator(
 			return pubsub.ValidationReject
 		}
 
-		signatureBytes := data[:expectedSigLen]
-		payloadBytes := data[expectedSigLen:]
+		signatureBytes, payloadBytes := data[:65], data[65:]
+
+		signedPayloadBytes := payloadBytes[:len(payloadBytes)-expectedSigLen]
 
 		// 4) Verify the sequencer’s wire signature
-		if res := verifyBlockSignature(logger, cfg, runCfg, id, signatureBytes, payloadBytes); res != pubsub.ValidationAccept {
+		if res := verifyBlockSignature(logger, cfg, runCfg, id, signatureBytes, signedPayloadBytes); res != pubsub.ValidationAccept {
 			return res
 		}
 
