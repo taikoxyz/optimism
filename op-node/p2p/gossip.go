@@ -970,10 +970,11 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 		return fmt.Errorf("encode envelope (with sig): %w", err)
 	}
 
-	// 5) publish exactly as before: no extra wire-prefix step,
-	//    because here we’re on the “preconfBlocks” topic which
-	//    doesn’t use a separate wire signature.
-	out := snappy.Encode(nil, fullBuf.Bytes())
+	wireMsg := append(sigBytes[:], fullBuf.Bytes()...)
+
+	// 6) Compress & publish exactly like before
+	out := snappy.Encode(nil, wireMsg)
+
 	switch {
 	case p.cfg.Taiko:
 		return p.preconfBlocksV1.topic.Publish(ctx, out)
