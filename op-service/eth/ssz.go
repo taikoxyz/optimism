@@ -477,20 +477,9 @@ func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader
 		payloadScope -= signatureLength
 	}
 
-	// 4) auto-detect V1 vs V2 vs V3 by the fixed-part size
-	var version BlockVersion
-	switch {
-	case payloadScope >= executionPayloadFixedPart(BlockV3):
-		version = BlockV3
-	case payloadScope >= executionPayloadFixedPart(BlockV2):
-		version = BlockV2
-	default:
-		version = BlockV1
-	}
-
 	// 5) decode the payload
 	payload := new(ExecutionPayload)
-	if err := payload.UnmarshalSSZ(version, payloadScope, r); err != nil {
+	if err := payload.UnmarshalSSZ(BlockV1, payloadScope, r); err != nil {
 		return fmt.Errorf("decode payload: %w", err)
 	}
 	envelope.ExecutionPayload = payload
