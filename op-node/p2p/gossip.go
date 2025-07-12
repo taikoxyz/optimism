@@ -950,11 +950,11 @@ func (p *publisher) PreconfBlocksTopicV1Peers() []peer.ID {
 	return p.preconfBlocksV1.topic.ListPeers()
 }
 
-func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.ExecutionPayloadEnvelope, signer Signer) (*[65]byte, error) {
+func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.ExecutionPayloadEnvelope, signer Signer) error {
 	// 1) SSZ-marshal flags+root+payload (no signature yet)
 	var payloadBuf bytes.Buffer
 	if _, err := envelope.MarshalSSZ(&payloadBuf); err != nil {
-		return nil, fmt.Errorf("encode envelope (no sig): %w", err)
+		return fmt.Errorf("encode envelope (no sig): %w", err)
 	}
 
 	// 2) Sign exactly those bytes
@@ -965,10 +965,10 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 		payloadBuf.Bytes(),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("sign execution payload: %w", err)
+		return fmt.Errorf("sign execution payload: %w", err)
 	}
 	if len(sigBytes) != expectedSigLen {
-		return nil, fmt.Errorf("invalid signature length %d, want %d", len(sigBytes), expectedSigLen)
+		return fmt.Errorf("invalid signature length %d, want %d", len(sigBytes), expectedSigLen)
 	}
 
 	envelope.Signature = sigBytes
@@ -976,7 +976,7 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 	// 4) re-marshal the full envelope (flags + root + payload + signature)
 	var fullBuf bytes.Buffer
 	if _, err := envelope.MarshalSSZ(&fullBuf); err != nil {
-		return nil, fmt.Errorf("encode envelope (with sig): %w", err)
+		return fmt.Errorf("encode envelope (with sig): %w", err)
 	}
 
 	wireMsg := append(sigBytes[:], fullBuf.Bytes()...)
@@ -984,8 +984,16 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 	// 6) Compress & publish exactly like before
 	out := snappy.Encode(nil, wireMsg)
 
-	// CHANGE(taiko): only support preconfBlocksV1 topic
-	return sigBytes, p.preconfBlocksV1.topic.Publish(ctx, out)
+	switch {
+	case p.cfg.Taiko:
+		return p.preconfBlocksV1.topic.Publish(ctx, out)
+	case p.cfg.IsEcotone(uint64(envelope.ExecutionPayload.Timestamp)):
+		return p.blocksV3.topic.Publish(ctx, out)
+	case p.cfg.IsCanyon(uint64(envelope.ExecutionPayload.Timestamp)):
+		return p.blocksV2.topic.Publish(ctx, out)
+	default:
+		return p.blocksV1.topic.Publish(ctx, out)
+	}
 }
 
 // CHANGE(taiko): publish to preconfBlocksRequest topic
