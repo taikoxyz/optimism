@@ -1019,8 +1019,6 @@ func (p *publisher) PublishL2RequestResponse(ctx context.Context, envelope *eth.
 		defer msgBufPool.Put(res)
 	}()
 
-	buf.Write(make([]byte, 65))
-
 	// change(taiko): always emit the full envelope (flag + root placeholder + payload)
 	if _, err := envelope.MarshalSSZ(buf); err != nil {
 		return fmt.Errorf("failed to encode execution payload envelope to publish: %w", err)
