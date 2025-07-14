@@ -500,11 +500,22 @@ func BuildPreconfBlocksResponseValidator(
 			log.Warn("missing envelope signature", "peer", id)
 			return pubsub.ValidationReject
 		}
-		// 6) carve the embedded sig off the _end_ and verify:
-		sigBytes := envelope.Signature[:]                              // trailer
-		signedBytes := payloadBytes[:len(payloadBytes)-expectedSigLen] // leading flags+root+payload
-		signedBytes[1] &^= 0x02                                        // clear sig‐present bit
-		if res := verifyBlockResponseSignature(log, cfg, runCfg, id, sigBytes, signedBytes); res == pubsub.ValidationReject {
+		tempEnvelope := eth.ExecutionPayloadEnvelope{
+			ExecutionPayload:      envelope.ExecutionPayload,
+			ParentBeaconBlockRoot: envelope.ParentBeaconBlockRoot,
+			EndOfSequencing:       envelope.EndOfSequencing,
+			IsForcedInclusion:     envelope.IsForcedInclusion,
+			// Signature is nil - same as when signing
+		}
+
+		var signedBytesBuf bytes.Buffer
+		if _, err := tempEnvelope.MarshalSSZ(&signedBytesBuf); err != nil {
+			log.Warn("failed to reconstruct signed bytes", "err", err, "peer", id)
+			return pubsub.ValidationReject
+		}
+
+		sigBytes := envelope.Signature[:]
+		if res := verifyBlockResponseSignature(log, cfg, runCfg, id, sigBytes, signedBytesBuf.Bytes()); res == pubsub.ValidationReject {
 			return res
 		}
 
@@ -782,6 +793,8 @@ func verifyBlockSignature(log log.Logger, cfg *rollup.Config, runCfg GossipRunti
 		return pubsub.ValidationReject
 	}
 	addr := crypto.PubkeyToAddress(*pub)
+
+	log.Debug("verifying block signature", "peer", id, "addr", addr.Hex(), "signing_hash", signingHash.Hex())
 
 	// CHANGE(taiko): check if the signer is in the whitelist.
 	if cfg, ok := runCfg.(PreconfGossipRuntimeConfig); ok {
