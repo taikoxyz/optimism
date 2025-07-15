@@ -946,13 +946,11 @@ func (p *publisher) PreconfBlocksTopicV1Peers() []peer.ID {
 }
 
 func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.ExecutionPayloadEnvelope, signer Signer) error {
-	// 1) SSZ-marshal flags+root+payload (no signature yet)
 	var payloadBuf bytes.Buffer
 	if _, err := envelope.MarshalSSZ(&payloadBuf); err != nil {
 		return fmt.Errorf("encode envelope (no sig): %w", err)
 	}
 
-	// 2) Sign exactly those bytes
 	sigBytes, err := signer.Sign(
 		ctx,
 		SigningDomainBlocksV1,
@@ -966,10 +964,8 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 		return fmt.Errorf("invalid signature length %d, want %d", len(sigBytes), expectedSigLen)
 	}
 
-	// sign just the block hash as the envelope signature
-
-	// 2) Sign exactly those bytes
-	envelopeSigBytes, err := signer.Sign(
+	// CHANGE(taiko): also sign the blockHash,persist as envelope.Signature
+	blockHashSigBytes, err := signer.Sign(
 		ctx,
 		SigningDomainBlocksV1,
 		p.cfg.L2ChainID,
@@ -978,13 +974,14 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 	if err != nil {
 		return fmt.Errorf("sign execution payload: %w", err)
 	}
-	if len(envelopeSigBytes) != expectedSigLen {
-		return fmt.Errorf("invalid signature length %d, want %d", len(envelopeSigBytes), expectedSigLen)
+
+	if len(blockHashSigBytes) != expectedSigLen {
+		return fmt.Errorf("invalid signature length %d, want %d", len(blockHashSigBytes), expectedSigLen)
 	}
 
-	envelope.Signature = envelopeSigBytes
+	envelope.Signature = blockHashSigBytes
 
-	// 4) re-marshal the full envelope (flags + root + payload + signature)
+	// CHANGE(taiko): now we have the envelope with the signature, encode it
 	var fullBuf bytes.Buffer
 	if _, err := envelope.MarshalSSZ(&fullBuf); err != nil {
 		return fmt.Errorf("encode envelope (with sig): %w", err)
@@ -992,7 +989,6 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 
 	wireMsg := append(sigBytes[:], fullBuf.Bytes()...)
 
-	// 6) Compress & publish exactly like before
 	out := snappy.Encode(nil, wireMsg)
 
 	switch {
@@ -1030,11 +1026,11 @@ func (p *publisher) PublishL2RequestResponse(ctx context.Context, envelope *eth.
 		defer msgBufPool.Put(res)
 	}()
 
-	// change(taiko): always emit the full envelope (flag + root placeholder + payload)
 	if _, err := envelope.MarshalSSZ(buf); err != nil {
 		return fmt.Errorf("failed to encode execution payload envelope to publish: %w", err)
 	}
 
+	// CHANGE(taiko):
 	// remove signing, Signer can be nil here now.
 	// anyone can propagate blocks but the envelope.Signature will be read instead.
 	data := buf.Bytes()
