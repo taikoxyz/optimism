@@ -485,12 +485,8 @@ func BuildPreconfBlocksResponseValidator(
 			*bufPtr = data[:cap(data)]
 		}
 
-		// 3) no more front‐of‐message chop
-		payloadBytes := data // the full SSZ envelope
-
-		// 4) SSZ‐decode flags+root+payload+embedded signature
 		var envelope eth.ExecutionPayloadEnvelope
-		if err := envelope.UnmarshalSSZ(uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
+		if err := envelope.UnmarshalSSZ(uint32(len(data)), bytes.NewReader(data)); err != nil {
 			log.Warn("invalid envelope payload", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
@@ -500,22 +496,8 @@ func BuildPreconfBlocksResponseValidator(
 			log.Warn("missing envelope signature", "peer", id)
 			return pubsub.ValidationReject
 		}
-		tempEnvelope := eth.ExecutionPayloadEnvelope{
-			ExecutionPayload:      envelope.ExecutionPayload,
-			ParentBeaconBlockRoot: envelope.ParentBeaconBlockRoot,
-			EndOfSequencing:       envelope.EndOfSequencing,
-			IsForcedInclusion:     envelope.IsForcedInclusion,
-			// Signature is nil - same as when signing
-		}
 
-		var signedBytesBuf bytes.Buffer
-		if _, err := tempEnvelope.MarshalSSZ(&signedBytesBuf); err != nil {
-			log.Warn("failed to reconstruct signed bytes", "err", err, "peer", id)
-			return pubsub.ValidationReject
-		}
-
-		sigBytes := envelope.Signature[:]
-		if res := verifyBlockResponseSignature(log, cfg, runCfg, id, sigBytes, signedBytesBuf.Bytes()); res == pubsub.ValidationReject {
+		if res := verifyBlockResponseSignature(log, cfg, runCfg, id, envelope.Signature[:], envelope.ExecutionPayload.BlockHash.Bytes()); res == pubsub.ValidationReject {
 			return res
 		}
 
@@ -984,7 +966,23 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 		return fmt.Errorf("invalid signature length %d, want %d", len(sigBytes), expectedSigLen)
 	}
 
-	envelope.Signature = sigBytes
+	// sign just the block hash as the envelope signature
+
+	// 2) Sign exactly those bytes
+	envelopeSigBytes, err := signer.Sign(
+		ctx,
+		SigningDomainBlocksV1,
+		p.cfg.L2ChainID,
+		envelope.ExecutionPayload.BlockHash.Bytes(),
+	)
+	if err != nil {
+		return fmt.Errorf("sign execution payload: %w", err)
+	}
+	if len(envelopeSigBytes) != expectedSigLen {
+		return fmt.Errorf("invalid signature length %d, want %d", len(envelopeSigBytes), expectedSigLen)
+	}
+
+	envelope.Signature = envelopeSigBytes
 
 	// 4) re-marshal the full envelope (flags + root + payload + signature)
 	var fullBuf bytes.Buffer
