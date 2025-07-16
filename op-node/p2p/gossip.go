@@ -376,26 +376,10 @@ func BuildPreconfBlocksValidator(
 			return pubsub.ValidationReject
 		}
 
-		// data == full wire blob: [65-byte wire sig][flags+root+payload+envelopeSig]
-		payloadBytes := data[expectedSigLen:]
-
-		// carve off the envelopeSig to get the “signed” region
-		signedLen := len(payloadBytes) - expectedSigLen
-
-		orig := payloadBytes[:signedLen]
-
-		signatureBytes, payloadBytes := data[:expectedSigLen], data[expectedSigLen:]
-
-		// alloc a fresh slice and copy into it
-		signedPayloadBytes := make([]byte, signedLen)
-
-		copy(signedPayloadBytes, orig)
-
-		// now clear the “signature-present” bit
-		signedPayloadBytes[1] &^= 0x02
+		signatureBytes, payloadBytes := data[expectedSigLen:], data[:expectedSigLen]
 
 		// 4) Verify the sequencer’s wire signature
-		if res := verifyBlockSignature(logger, cfg, runCfg, id, signatureBytes, signedPayloadBytes); res != pubsub.ValidationAccept {
+		if res := verifyBlockSignature(logger, cfg, runCfg, id, signatureBytes, payloadBytes); res != pubsub.ValidationAccept {
 			return res
 		}
 
@@ -963,23 +947,6 @@ func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.Executio
 	if len(sigBytes) != expectedSigLen {
 		return fmt.Errorf("invalid signature length %d, want %d", len(sigBytes), expectedSigLen)
 	}
-
-	// CHANGE(taiko): also sign the blockHash,persist as envelope.Signature
-	blockHashSigBytes, err := signer.Sign(
-		ctx,
-		SigningDomainBlocksV1,
-		p.cfg.L2ChainID,
-		envelope.ExecutionPayload.BlockHash.Bytes(),
-	)
-	if err != nil {
-		return fmt.Errorf("sign execution payload: %w", err)
-	}
-
-	if len(blockHashSigBytes) != expectedSigLen {
-		return fmt.Errorf("invalid signature length %d, want %d", len(blockHashSigBytes), expectedSigLen)
-	}
-
-	envelope.Signature = blockHashSigBytes
 
 	// CHANGE(taiko): now we have the envelope with the signature, encode it
 	var fullBuf bytes.Buffer
