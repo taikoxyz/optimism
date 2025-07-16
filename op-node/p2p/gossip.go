@@ -376,7 +376,7 @@ func BuildPreconfBlocksValidator(
 			return pubsub.ValidationReject
 		}
 
-		signatureBytes, payloadBytes := data[expectedSigLen:], data[:expectedSigLen]
+		signatureBytes, payloadBytes := data[:expectedSigLen], data[expectedSigLen:]
 
 		// 4) Verify the sequencer’s wire signature
 		if res := verifyBlockSignature(logger, cfg, runCfg, id, signatureBytes, payloadBytes); res != pubsub.ValidationAccept {
