@@ -47,6 +47,7 @@ const (
 	peerScoreInspectFrequency = 15 * time.Second
 	defaultBufferSize         = 768  // CHANGE(taiko): change sizes to contants
 	defaultLRUCacheSize       = 1000 // CHANGE(taiko): change sizes to contants
+	expectedSigLen            = 65   // CHANGE(taiko): expected signature length for the sequencer signature
 )
 
 // Message domains, the msg id function uncompresses to keep data monomorphic,
@@ -329,127 +330,126 @@ func (sh *seenHashes) markSeen(h common.Hash) {
 }
 
 // CHANGE(taiko): add preconfBlocks topic validator
-func BuildPreconfBlocksValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig, blockVersion eth.BlockVersion) pubsub.ValidatorEx {
+func BuildPreconfBlocksValidator(
+	logger log.Logger,
+	cfg *rollup.Config,
+	runCfg GossipRuntimeConfig,
+	blockVersion eth.BlockVersion,
+) pubsub.ValidatorEx {
 	// Seen block hashes per block height
-	// uint64 -> *seenBlocks
-	preconfblockLRU, err := lru.New[uint64, *seenBlocks](defaultLRUCacheSize)
+	preconfLRU, err := lru.New[uint64, *seenBlocks](defaultLRUCacheSize)
 	if err != nil {
 		panic(fmt.Errorf("failed to set up block height LRU cache: %w", err))
 	}
 
 	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
-		// [REJECT] if the compression is not valid
+		// 1) Snappy length sanity checks
 		outLen, err := snappy.DecodedLen(message.Data)
 		if err != nil {
 			log.Warn("invalid snappy compression length data", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
 		if outLen > maxGossipSize {
-			log.Warn("possible snappy zip bomb, decoded length is too large", "decoded_length", outLen, "peer", id)
+			log.Warn("possible snappy zip bomb", "decoded_length", outLen, "peer", id)
 			return pubsub.ValidationReject
 		}
 		if outLen < minGossipSize {
-			log.Warn("rejecting undersized gossip payload")
+			log.Warn("undersized gossip payload", "peer", id)
 			return pubsub.ValidationReject
 		}
 
-		res := msgBufPool.Get().(*[]byte)
-		defer msgBufPool.Put(res)
-		data, err := snappy.Decode((*res)[:cap(*res)], message.Data)
+		// 2) Snappy-decode into pooled buffer
+		bufPtr := msgBufPool.Get().(*[]byte)
+		defer msgBufPool.Put(bufPtr)
+		data, err := snappy.Decode((*bufPtr)[:cap(*bufPtr)], message.Data)
 		if err != nil {
-			log.Warn("invalid snappy compression", "err", err, "peer", id)
+			logger.Warn("snappy decode failed", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
-		// if we ended up growing the slice capacity, fine, keep the larger one.
-		if cap(data) > cap(*res) {
-			*res = data[:cap(data)]
+		if cap(data) > cap(*bufPtr) {
+			*bufPtr = data[:cap(data)]
 		}
 
-		// message starts with compact-encoding secp256k1 encoded signature
-		signatureBytes, payloadBytes := data[:65], data[65:]
-
-		// [REJECT] if the signature by the sequencer is not valid
-		result := verifyBlockSignature(log, cfg, runCfg, id, signatureBytes, payloadBytes)
-		if result == pubsub.ValidationReject {
-			return result
+		// 3) Split off the wire signature prefix
+		if len(data) < expectedSigLen {
+			logger.Warn("payload too short to contain wire signature", "peer", id)
+			return pubsub.ValidationReject
 		}
 
+		signatureBytes, payloadBytes := data[:expectedSigLen], data[expectedSigLen:]
+
+		// 4) Verify the sequencer’s wire signature
+		if res := verifyBlockSignature(logger, cfg, runCfg, id, signatureBytes, payloadBytes); res != pubsub.ValidationAccept {
+			return res
+		}
+
+		// 5) Now SSZ-decode the payloadBytes into the envelope
 		var envelope eth.ExecutionPayloadEnvelope
-		// hdr = 1 byte flag + 32 byte root, then payload
 		if err := envelope.UnmarshalSSZ(uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
-			log.Warn("invalid envelope payload", "err", err, "peer", id)
+			logger.Warn("invalid envelope payload", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
 
+		// 6) Sanity-check the inner ExecutionPayload
 		payload := envelope.ExecutionPayload
-
-		// [REJECT] if the `payload` is null
 		if payload == nil {
-			log.Warn("payload is empty", "peer", id)
+			logger.Warn("payload is empty", "peer", id)
 			return pubsub.ValidationReject
 		}
-		// [REJECT] if the `payload.Transactions` is null or empty
 		if len(payload.Transactions) == 0 {
-			log.Warn("payload has empty transaction data", "peer", id)
+			logger.Warn("payload has empty transaction data", "peer", id)
 			return pubsub.ValidationReject
 		}
-
-		// [REJECT] if the `coinbase` in the `payload` is empty
 		if payload.FeeRecipient == (common.Address{}) {
-			log.Warn("empty coinbase in payload", "peer", id)
+			logger.Warn("empty coinbase in payload", "peer", id)
 			return pubsub.ValidationReject
 		}
-
-		// [REJECT] if the `blockParams.blockID` is zero
 		if payload.BlockNumber == 0 {
-			log.Warn("payload has zero block ID", "peer", id)
+			logger.Warn("payload has zero block ID", "peer", id)
 			return pubsub.ValidationReject
 		}
 
-		seen, ok := preconfblockLRU.Get(uint64(payload.BlockNumber))
+		// 7) Deduplicate by block number + hash
+		height := uint64(payload.BlockNumber)
+		seen, ok := preconfLRU.Get(height)
 		if !ok {
 			seen = new(seenBlocks)
-			preconfblockLRU.Add(uint64(payload.BlockNumber), seen)
+			preconfLRU.Add(height, seen)
 		}
-
-		if count, hasSeen := seen.hasSeen(payload.BlockHash); count > 5 {
-			// [REJECT] if more than 5 blocks have been seen with the same block height
-			log.Warn("seen too many different blocks at same height", "height", payload.BlockNumber)
-			return pubsub.ValidationReject
-		} else if hasSeen {
-			// [IGNORE] if the block has already been seen
-			log.Warn("validated already seen message again")
+		if count, _ := seen.hasSeen(payload.BlockHash); count > 10 {
+			logger.Warn("seen same block hash too many times in preconf response", "height", payload.BlockNumber)
 			return pubsub.ValidationIgnore
 		}
-
-		// mark it as seen. (note: with concurrent validation more than 5 preconf blocks may be marked as seen still,
-		// but validator concurrency is limited anyway)
 		seen.markSeen(payload.BlockHash)
 
-		// remember the decoded payload for later usage in topic subscriber.
+		// 8) All good—stash the decoded envelope for the subscriber
 		message.ValidatorData = &envelope
 		return pubsub.ValidationAccept
 	}
 }
 
 // CHANGE(taiko): add preconfBlocks topic validator
-func BuildPreconfBlocksResponseValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig, blockVersion eth.BlockVersion) pubsub.ValidatorEx {
+func BuildPreconfBlocksResponseValidator(
+	log log.Logger,
+	cfg *rollup.Config,
+	runCfg GossipRuntimeConfig,
+	blockVersion eth.BlockVersion,
+) pubsub.ValidatorEx {
 	// Seen block hashes per block height
-	// uint64 -> *seenBlocks
 	preconfblockLRU, err := lru.New[uint64, *seenBlocks](defaultLRUCacheSize)
 	if err != nil {
 		panic(fmt.Errorf("failed to set up block height LRU cache: %w", err))
 	}
 
 	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
-		// [REJECT] if the compression is not valid
+		// 1) Snappy‐length sanity checks
 		outLen, err := snappy.DecodedLen(message.Data)
 		if err != nil {
 			log.Warn("invalid snappy compression length data", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
 		if outLen > maxGossipSize {
-			log.Warn("possible snappy zip bomb, decoded length is too large", "decoded_length", outLen, "peer", id)
+			log.Warn("possible snappy zip bomb", "decoded_length", outLen, "peer", id)
 			return pubsub.ValidationReject
 		}
 		if outLen < minGossipSize {
@@ -457,78 +457,68 @@ func BuildPreconfBlocksResponseValidator(log log.Logger, cfg *rollup.Config, run
 			return pubsub.ValidationReject
 		}
 
-		res := msgBufPool.Get().(*[]byte)
-		defer msgBufPool.Put(res)
-		data, err := snappy.Decode((*res)[:cap(*res)], message.Data)
+		// 2) Snappy‐decode into pooled buffer
+		bufPtr := msgBufPool.Get().(*[]byte)
+		defer msgBufPool.Put(bufPtr)
+		data, err := snappy.Decode((*bufPtr)[:cap(*bufPtr)], message.Data)
 		if err != nil {
 			log.Warn("invalid snappy compression", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
-		// if we ended up growing the slice capacity, fine, keep the larger one.
-		if cap(data) > cap(*res) {
-			*res = data[:cap(data)]
+		if cap(data) > cap(*bufPtr) {
+			*bufPtr = data[:cap(data)]
 		}
 
-		// message starts with compact-encoding secp256k1 encoded signature
-		signatureBytes, payloadBytes := data[:65], data[65:]
-
-		// [REJECT] if the signature by the sequencer is not valid
-		result := verifyBlockResponseSignature(log, cfg, runCfg, id, signatureBytes, payloadBytes)
-		if result == pubsub.ValidationReject {
-			return result
-		}
-
-		// decode full envelope (1B flag + 32B root + payload…)
 		var envelope eth.ExecutionPayloadEnvelope
-		if err := envelope.UnmarshalSSZ(uint32(len(payloadBytes)), bytes.NewReader(payloadBytes)); err != nil {
+		if err := envelope.UnmarshalSSZ(uint32(len(data)), bytes.NewReader(data)); err != nil {
 			log.Warn("invalid envelope payload", "err", err, "peer", id)
 			return pubsub.ValidationReject
 		}
 
-		payload := envelope.ExecutionPayload
+		// 5) must have that embedded 65B signature
+		if envelope.Signature == nil {
+			log.Warn("missing envelope signature", "peer", id)
+			return pubsub.ValidationReject
+		}
 
-		// [REJECT] if the `payload` is null
+		if res := verifyBlockResponseSignature(log, cfg, runCfg, id, envelope.Signature[:], envelope.ExecutionPayload.BlockHash.Bytes()); res == pubsub.ValidationReject {
+			return res
+		}
+
+		// 7) Payload sanity checks
+		payload := envelope.ExecutionPayload
 		if payload == nil {
 			log.Warn("payload is empty", "peer", id)
 			return pubsub.ValidationReject
 		}
-
-		// [REJECT] if the `payload.Transactions` is null or empty
 		if len(payload.Transactions) == 0 {
 			log.Warn("payload has empty transaction data", "peer", id)
 			return pubsub.ValidationReject
 		}
-
-		// [REJECT] if the `coinbase` in the `payload` is empty
 		if payload.FeeRecipient == (common.Address{}) {
 			log.Warn("empty coinbase in payload", "peer", id)
 			return pubsub.ValidationReject
 		}
-
-		// [REJECT] if the `blockParams.blockID` is zero
 		if payload.BlockNumber == 0 {
 			log.Warn("payload has zero block ID", "peer", id)
 			return pubsub.ValidationReject
 		}
 
-		seen, ok := preconfblockLRU.Get(uint64(payload.BlockNumber))
+		// 8) Deduplicate by block number + hash
+		height := uint64(payload.BlockNumber)
+		seen, ok := preconfblockLRU.Get(height)
 		if !ok {
 			seen = new(seenBlocks)
-			preconfblockLRU.Add(uint64(payload.BlockNumber), seen)
+			preconfblockLRU.Add(height, seen)
 		}
-
 		if count, _ := seen.hasSeen(payload.BlockHash); count > 10 {
 			log.Warn("seen same block hash too many times in preconf response", "height", payload.BlockNumber)
 			return pubsub.ValidationIgnore
 		}
-
-		// mark it as seen. (note: with concurrent validation more than 5 preconf blocks may be marked as seen still,
-		// but validator concurrency is limited anyway)
 		seen.markSeen(payload.BlockHash)
 
-		// remember the decoded payload for later usage in topic subscriber.
+		// 9) All good—stash the decoded envelope for later usage
 		message.ValidatorData = &envelope
-
 		return pubsub.ValidationAccept
 	}
 }
@@ -770,6 +760,8 @@ func verifyBlockSignature(log log.Logger, cfg *rollup.Config, runCfg GossipRunti
 	}
 	addr := crypto.PubkeyToAddress(*pub)
 
+	log.Debug("verifying block signature", "peer", id, "addr", addr.Hex(), "signing_hash", signingHash.Hex())
+
 	// CHANGE(taiko): check if the signer is in the whitelist.
 	if cfg, ok := runCfg.(PreconfGossipRuntimeConfig); ok {
 		// If the signer is in the whitelist, accept the block.
@@ -938,42 +930,42 @@ func (p *publisher) PreconfBlocksTopicV1Peers() []peer.ID {
 }
 
 func (p *publisher) PublishL2Payload(ctx context.Context, envelope *eth.ExecutionPayloadEnvelope, signer Signer) error {
-	res := msgBufPool.Get().(*[]byte)
-	buf := bytes.NewBuffer((*res)[:0])
-	defer func() {
-		*res = buf.Bytes()
-		defer msgBufPool.Put(res)
-	}()
-
-	buf.Write(make([]byte, 65))
-
-	// change(taiko): always emit the full envelope (flag + root placeholder + payload)
-	if _, err := envelope.MarshalSSZ(buf); err != nil {
-		return fmt.Errorf("failed to encode execution payload envelope to publish: %w", err)
+	var payloadBuf bytes.Buffer
+	if _, err := envelope.MarshalSSZ(&payloadBuf); err != nil {
+		return fmt.Errorf("encode envelope (no sig): %w", err)
 	}
 
-	data := buf.Bytes()
-	payloadData := data[65:]
-	sig, err := signer.Sign(ctx, SigningDomainBlocksV1, p.cfg.L2ChainID, payloadData)
+	sigBytes, err := signer.Sign(
+		ctx,
+		SigningDomainBlocksV1,
+		p.cfg.L2ChainID,
+		payloadBuf.Bytes(),
+	)
 	if err != nil {
-		return fmt.Errorf("failed to sign execution payload with signer: %w", err)
+		return fmt.Errorf("sign execution payload: %w", err)
 	}
-	copy(data[:65], sig[:])
+	if len(sigBytes) != expectedSigLen {
+		return fmt.Errorf("invalid signature length %d, want %d", len(sigBytes), expectedSigLen)
+	}
 
-	// compress the full message
-	// This also copies the data, freeing up the original buffer to go back into the pool
-	out := snappy.Encode(nil, data)
+	// CHANGE(taiko): now we have the envelope with the signature, encode it
+	var fullBuf bytes.Buffer
+	if _, err := envelope.MarshalSSZ(&fullBuf); err != nil {
+		return fmt.Errorf("encode envelope (with sig): %w", err)
+	}
 
-	// CHANGE(taiko): publish to preconfBlocksV1 topic if Taiko flag is enabled
-	if p.cfg.Taiko {
+	wireMsg := append(sigBytes[:], fullBuf.Bytes()...)
+
+	out := snappy.Encode(nil, wireMsg)
+
+	switch {
+	case p.cfg.Taiko:
 		return p.preconfBlocksV1.topic.Publish(ctx, out)
-	}
-
-	if p.cfg.IsEcotone(uint64(envelope.ExecutionPayload.Timestamp)) {
+	case p.cfg.IsEcotone(uint64(envelope.ExecutionPayload.Timestamp)):
 		return p.blocksV3.topic.Publish(ctx, out)
-	} else if p.cfg.IsCanyon(uint64(envelope.ExecutionPayload.Timestamp)) {
+	case p.cfg.IsCanyon(uint64(envelope.ExecutionPayload.Timestamp)):
 		return p.blocksV2.topic.Publish(ctx, out)
-	} else {
+	default:
 		return p.blocksV1.topic.Publish(ctx, out)
 	}
 }
@@ -1001,23 +993,16 @@ func (p *publisher) PublishL2RequestResponse(ctx context.Context, envelope *eth.
 		defer msgBufPool.Put(res)
 	}()
 
-	buf.Write(make([]byte, 65))
-
-	// change(taiko): always emit the full envelope (flag + root placeholder + payload)
 	if _, err := envelope.MarshalSSZ(buf); err != nil {
 		return fmt.Errorf("failed to encode execution payload envelope to publish: %w", err)
 	}
 
+	// CHANGE(taiko):
+	// remove signing, Signer can be nil here now.
+	// anyone can propagate blocks but the envelope.Signature will be read instead.
 	data := buf.Bytes()
-	payloadData := data[65:]
-	sig, err := signer.Sign(ctx, SigningDomainBlocksV1, p.cfg.L2ChainID, payloadData)
-	if err != nil {
-		return fmt.Errorf("failed to sign execution payload with signer: %w", err)
-	}
-	copy(data[:65], sig[:])
 
-	// compress the full message
-	// This also copies the data, freeing up the original buffer to go back into the pool
+	// compress the full message (copies data into a new slice)
 	out := snappy.Encode(nil, data)
 
 	return p.preconfBlocksResponse.topic.Publish(ctx, out)
