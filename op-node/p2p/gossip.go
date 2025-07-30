@@ -623,11 +623,6 @@ func BuildPreconfBlocksEndOfSequencingRequestValidator(log log.Logger, cfg *roll
 			return pubsub.ValidationIgnore
 		}
 
-		if b.credit < 1.0 {
-			return pubsub.ValidationIgnore
-		}
-		b.credit -= 1.0
-
 		// Count only after rate‑limit passes.
 		seen.markSeen(epoch)
 
