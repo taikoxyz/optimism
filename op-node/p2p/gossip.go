@@ -608,6 +608,7 @@ func BuildPreconfBlocksEndOfSequencingRequestValidator(log log.Logger, cfg *roll
 
 		// Per-peer token bucket
 		bucketsMu.Lock()
+		defer bucketsMu.Unlock()
 		cap := float64(maxTokens)
 
 		// per message (inside bucketsMu.Lock()):
@@ -623,11 +624,9 @@ func BuildPreconfBlocksEndOfSequencingRequestValidator(log log.Logger, cfg *roll
 		}
 
 		if b.credit < 1.0 {
-			bucketsMu.Unlock()
 			return pubsub.ValidationIgnore
 		}
 		b.credit -= 1.0
-		bucketsMu.Unlock()
 
 		// Count only after rate‑limit passes.
 		seen.markSeen(epoch)
