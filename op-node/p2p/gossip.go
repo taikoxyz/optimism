@@ -28,6 +28,9 @@ import (
 )
 
 const (
+	window       = 45 * time.Second // CHANGE(taiko): window for accepting the same hash
+	refillPerMin = 200              // CHANGE(taiko): tokens/min per peer
+	maxTokens    = refillPerMin     // CHANGE(taiko): max tokens per peer
 	// maxGossipSize limits the total size of gossip RPC containers as well as decompressed individual messages.
 	maxGossipSize = 10 * (1 << 20)
 	// minGossipSize is used to make sure that there is at least some data to validate the signature against.
@@ -541,11 +544,7 @@ func BuildPreconfBlocksRequestValidator(log log.Logger, cfg *rollup.Config, runC
 		panic(fmt.Errorf("seen‑hash LRU: %w", err))
 	}
 
-	var bucketsMu, seenMu sync.Mutex
-
-	const window = 45 * time.Second // accept same hash <= once/45s
-	const refillPerMin = 200        // tokens/min per peer (tune)
-	const maxTokens = refillPerMin
+	var bucketsMu sync.Mutex
 
 	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
 		now := time.Now()
@@ -553,10 +552,8 @@ func BuildPreconfBlocksRequestValidator(log log.Logger, cfg *rollup.Config, runC
 
 		// we use a per hash time window to prevent spam
 		// of the same hash over and over.
-		seenMu.Lock()
-		defer seenMu.Unlock()
+
 		if t, ok := seenHash.Get(hash); ok && now.Sub(t) < window {
-			seenMu.Unlock()
 			return pubsub.ValidationIgnore
 		}
 
@@ -588,9 +585,7 @@ func BuildPreconfBlocksRequestValidator(log log.Logger, cfg *rollup.Config, runC
 		b.tokens--
 
 		// mark seen after passing rate limit
-		seenMu.Lock()
 		seenHash.Add(hash, now)
-		seenMu.Unlock()
 		message.ValidatorData = hash
 		return pubsub.ValidationAccept
 	}
@@ -598,6 +593,10 @@ func BuildPreconfBlocksRequestValidator(log log.Logger, cfg *rollup.Config, runC
 
 // CHANGE(taiko): add preconfBlocksRequest topic validator
 func BuildPreconfBlocksEndOfSequencingRequestValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig) pubsub.ValidatorEx {
+	buckets, err := lru.New[peer.ID, *rateBucket](defaultLRUCacheSize) // per‑peer token buckets
+	if err != nil {
+		panic(fmt.Errorf("per‑peer buckets: %w", err))
+	}
 	// Seen block hashes per block height
 	// uint64 -> *seenBlocks
 	epochLRU, err := lru.New[uint64, *seenEpochs](defaultLRUCacheSize)
@@ -605,7 +604,10 @@ func BuildPreconfBlocksEndOfSequencingRequestValidator(log log.Logger, cfg *roll
 		panic(fmt.Errorf("failed to set up epoch LRU cache: %w", err))
 	}
 
+	var bucketsMu sync.Mutex
+
 	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
+		now := time.Now()
 		// convert message.Data to uint256
 		epoch := big.NewInt(0).SetBytes(message.Data).Uint64()
 
@@ -616,10 +618,37 @@ func BuildPreconfBlocksEndOfSequencingRequestValidator(log log.Logger, cfg *roll
 			epochLRU.Add(epoch, seen)
 		}
 
-		if count, hasSeen := seen.numSeen(epoch); hasSeen && count > 5 {
+		if count, hasSeen := seen.numSeen(epoch); hasSeen && count > maxResponsesAcceptable {
 			return pubsub.ValidationIgnore
 		}
 
+		bucketsMu.Lock()
+		defer bucketsMu.Unlock()
+		b, ok := buckets.Get(id)
+		if !ok {
+			// initialize the new rate bucket for this peer
+			b = &rateBucket{tokens: maxTokens, last: now}
+			buckets.Add(id, b)
+		} else {
+			// otherwise lets see if this bucket needs to be refilled
+			if d := now.Sub(b.last); d > 0 {
+				b.tokens += int(d.Minutes() * float64(refillPerMin))
+				if b.tokens > maxTokens {
+					b.tokens = maxTokens
+				}
+				b.last = now
+			}
+		}
+
+		// we just straight up ignore it if the bucket is empty
+		// it means this peer has sent too many requests in a short period
+		// of time.
+		if b.tokens < 1 {
+			return pubsub.ValidationIgnore
+		}
+		b.tokens--
+
+		// mark seen only after passing the rate limit
 		seen.markSeen(epoch)
 
 		message.ValidatorData = epoch
