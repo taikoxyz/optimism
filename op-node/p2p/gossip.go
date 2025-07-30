@@ -60,12 +60,6 @@ const (
 var MessageDomainInvalidSnappy = [4]byte{0, 0, 0, 0}
 var MessageDomainValidSnappy = [4]byte{1, 0, 0, 0}
 
-// rateBucket is used to limit the number of messages that can be sent in a given time period.
-type rateBucket struct {
-	tokens int
-	last   time.Time
-}
-
 type GossipSetupConfigurables interface {
 	PeerScoringParams() *ScoringParams
 	// ConfigureGossip creates configuration options to apply to the GossipSub setup
@@ -545,46 +539,36 @@ func BuildPreconfBlocksRequestValidator(log log.Logger, cfg *rollup.Config, runC
 	}
 
 	var bucketsMu sync.Mutex
+	rate := float64(refillPerMin) / 60.0 // tokens per second
 
 	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
 		now := time.Now()
 		hash := common.BytesToHash(message.Data)
 
-		// we use a per hash time window to prevent spam
-		// of the same hash over and over.
-
+		// Per-hash time window: drop repeats for a short window.
 		if t, ok := seenHash.Get(hash); ok && now.Sub(t) < window {
 			return pubsub.ValidationIgnore
 		}
 
-		// then, we have a bucket per-peer. this is so peers cant spam requests
-		// endlessly.
+		// Per-peer token bucket
 		bucketsMu.Lock()
 		defer bucketsMu.Unlock()
+
+		cap := float64(maxTokens)
+
+		// per message (inside bucketsMu.Lock()):
 		b, ok := buckets.Get(id)
 		if !ok {
-			// initialize the new rate bucket for this peer
-			b = &rateBucket{tokens: maxTokens, last: now}
+			b = &rateBucket{credit: cap, last: now}
 			buckets.Add(id, b)
 		} else {
-			// otherwise lets see if this bucket needs to be refilled
-			if d := now.Sub(b.last); d > 0 {
-				b.tokens += int(d.Minutes() * float64(refillPerMin))
-				if b.tokens > maxTokens {
-					b.tokens = maxTokens
-				}
-				b.last = now
-			}
+			refillBucket(b, now, rate, cap)
 		}
-
-		// we just straight up ignore it if the bucket is empty
-		// it means this peer has sent too many requests.
-		if b.tokens < 1 {
+		if !consumeToken(b, 1.0) {
 			return pubsub.ValidationIgnore
 		}
-		b.tokens--
 
-		// mark seen after passing rate limit
+		// Mark seen after passing rate limit.
 		seenHash.Add(hash, now)
 		message.ValidatorData = hash
 		return pubsub.ValidationAccept
@@ -605,54 +589,50 @@ func BuildPreconfBlocksEndOfSequencingRequestValidator(log log.Logger, cfg *roll
 	}
 
 	var bucketsMu sync.Mutex
+	rate := float64(refillPerMin) / 60.0 // tokens per second
 
 	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
 		now := time.Now()
-		// convert message.Data to uint256
 		epoch := big.NewInt(0).SetBytes(message.Data).Uint64()
 
+		// Per-epoch duplicate limiter (cap total seen responses per epoch).
 		seen, ok := epochLRU.Get(epoch)
 		if !ok {
 			seen = new(seenEpochs)
 			seen.epochs = make(map[uint64]uint64)
 			epochLRU.Add(epoch, seen)
 		}
-
 		if count, hasSeen := seen.numSeen(epoch); hasSeen && count > maxResponsesAcceptable {
 			return pubsub.ValidationIgnore
 		}
 
+		// Per-peer token bucket
 		bucketsMu.Lock()
-		defer bucketsMu.Unlock()
+		cap := float64(maxTokens)
+
+		// per message (inside bucketsMu.Lock()):
 		b, ok := buckets.Get(id)
 		if !ok {
-			// initialize the new rate bucket for this peer
-			b = &rateBucket{tokens: maxTokens, last: now}
+			b = &rateBucket{credit: cap, last: now}
 			buckets.Add(id, b)
 		} else {
-			// otherwise lets see if this bucket needs to be refilled
-			if d := now.Sub(b.last); d > 0 {
-				b.tokens += int(d.Minutes() * float64(refillPerMin))
-				if b.tokens > maxTokens {
-					b.tokens = maxTokens
-				}
-				b.last = now
-			}
+			refillBucket(b, now, rate, cap)
 		}
-
-		// we just straight up ignore it if the bucket is empty
-		// it means this peer has sent too many requests in a short period
-		// of time.
-		if b.tokens < 1 {
+		if !consumeToken(b, 1.0) {
 			return pubsub.ValidationIgnore
 		}
-		b.tokens--
 
-		// mark seen only after passing the rate limit
+		if b.credit < 1.0 {
+			bucketsMu.Unlock()
+			return pubsub.ValidationIgnore
+		}
+		b.credit -= 1.0
+		bucketsMu.Unlock()
+
+		// Count only after rate‑limit passes.
 		seen.markSeen(epoch)
 
 		message.ValidatorData = epoch
-
 		return pubsub.ValidationAccept
 	}
 }
