@@ -23,6 +23,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 
+	"github.com/ethereum-optimism/optimism/op-node/p2p/gating"
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 )
@@ -71,7 +72,11 @@ type GossipRuntimeConfig interface {
 }
 
 type PreconfGossipRuntimeConfig interface {
-	P2PSequencerAddresses() []common.Address
+	P2PSequencerAddresses() []common.Address    // CHANGE(taiko): new impl of preconf gossip runtime config
+	AllP2PSequencerAddresses() []common.Address // CHANGE(taiko): new impl of preconf gossip runtime config
+
+	Host() host.Host                           // CHANGE(taiko): new impl of preconf gossip runtime config
+	ConnGater() gating.BlockingConnectionGater // CHANGE(taiko): new impl of preconf gossip runtime config
 }
 
 //go:generate mockery --name GossipMetricer
@@ -312,25 +317,6 @@ func (se *seenEpochs) markSeen(epoch uint64) {
 type seenHashes struct {
 	sync.Mutex
 	blockHashes map[common.Hash]uint64
-}
-
-// CHANGE(taiko): numSeen checks if the hash has been marked as seen, and how many have been seen.
-func (sh *seenHashes) numSeen(h common.Hash) (count uint64, hasSeen bool) {
-	sh.Lock()
-	defer sh.Unlock()
-	count, hasSeen = sh.blockHashes[h]
-	return
-}
-
-// CHANGE(taiko): markSeen marks the block hash as seen
-func (sh *seenHashes) markSeen(h common.Hash) {
-	sh.Lock()
-	defer sh.Unlock()
-	if _, ok := sh.blockHashes[h]; !ok {
-		sh.blockHashes[h] = 1
-	} else {
-		sh.blockHashes[h]++
-	}
 }
 
 // CHANGE(taiko): add preconfBlocks topic validator
@@ -814,7 +800,39 @@ func verifyBlockSignature(log log.Logger, cfg *rollup.Config, runCfg GossipRunti
 		if slices.Contains(cfg.P2PSequencerAddresses(), addr) {
 			return pubsub.ValidationAccept
 		}
-		log.Warn("unexpected block authors", "err", err, "peer", id, "addrs", cfg.P2PSequencerAddresses())
+		log.Warn("unexpected block authors", "peer", id, "addrs", cfg.P2PSequencerAddresses())
+
+		// check if they are even in the whitelist at all
+		allSequencers := cfg.AllP2PSequencerAddresses()
+		if len(allSequencers) == 0 {
+			log.Warn("no configured p2p sequencer addresses, ignoring gossiped block", "peer", id, "addr", addr)
+			return pubsub.ValidationReject
+		}
+
+		if !slices.Contains(allSequencers, addr) {
+			// someone is trying to gossip blocks but is not even a registered sequencer.
+			// this is a spam attack or misbehaving peer, or someone trying to insert their own
+			// blocks. Rather than deal with this peer and lower their peer score slowly
+			// so they try again, we should just blacklist them immediately.
+			log.Warn("sequencer is not in whitelist, blacklisting", "peer", id, "addr", addr, "allSequencers", allSequencers)
+
+			// we want to block the peer immediately
+			if g := cfg.ConnGater(); g != nil {
+				if err := g.BlockPeer(id); err != nil {
+					log.Warn("failed to block peer in conn gater", "peer", id, "err", err)
+				}
+			}
+
+			// then we want to close any existing connections to the peer via the host.
+			if h := cfg.Host(); h != nil {
+				if err := h.Network().ClosePeer(id); err != nil {
+					log.Warn("failed to close peer connections", "peer", id, "err", err)
+				}
+			}
+
+			return pubsub.ValidationReject
+		}
+
 		return pubsub.ValidationReject
 	}
 
