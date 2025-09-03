@@ -802,37 +802,6 @@ func verifyBlockSignature(log log.Logger, cfg *rollup.Config, runCfg GossipRunti
 		}
 		log.Warn("unexpected block authors", "peer", id, "addrs", cfg.P2PSequencerAddresses())
 
-		// check if they are even in the whitelist at all
-		allSequencers := cfg.AllP2PSequencerAddresses()
-		if len(allSequencers) == 0 {
-			log.Warn("no configured p2p sequencer addresses, ignoring gossiped block", "peer", id, "addr", addr)
-			return pubsub.ValidationReject
-		}
-
-		if !slices.Contains(allSequencers, addr) {
-			// someone is trying to gossip blocks but is not even a registered sequencer.
-			// this is a spam attack or misbehaving peer, or someone trying to insert their own
-			// blocks. Rather than deal with this peer and lower their peer score slowly
-			// so they try again, we should just blacklist them immediately.
-			log.Warn("sequencer is not in whitelist, blacklisting", "peer", id, "addr", addr, "allSequencers", allSequencers)
-
-			// we want to block the peer immediately
-			if g := cfg.ConnGater(); g != nil {
-				if err := g.BlockPeer(id); err != nil {
-					log.Warn("failed to block peer in conn gater", "peer", id, "err", err)
-				}
-			}
-
-			// then we want to close any existing connections to the peer via the host.
-			if h := cfg.Host(); h != nil {
-				if err := h.Network().ClosePeer(id); err != nil {
-					log.Warn("failed to close peer connections", "peer", id, "err", err)
-				}
-			}
-
-			return pubsub.ValidationReject
-		}
-
 		return pubsub.ValidationReject
 	}
 
