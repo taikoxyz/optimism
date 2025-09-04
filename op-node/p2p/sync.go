@@ -333,7 +333,7 @@ func (s *SyncClient) AddPeer(id peer.ID) {
 		return
 	}
 	if _, ok := s.peers[id]; ok {
-		s.log.Warn("cannot register peer for sync duties, peer was already registered", "peer", id)
+		s.log.Debug("cannot register peer for sync duties, peer was already registered", "peer", id)
 		return
 	}
 	s.wg.Add(1)
@@ -351,7 +351,7 @@ func (s *SyncClient) RemovePeer(id peer.ID) {
 	}
 	cancel, ok := s.peers[id]
 	if !ok {
-		s.log.Warn("cannot remove peer from sync duties, peer was not registered", "peer", id)
+		s.log.Debug("cannot remove peer from sync duties, peer was not registered", "peer", id)
 		return
 	}
 	cancel() // once loop exits
