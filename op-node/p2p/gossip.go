@@ -23,7 +23,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 
-	"github.com/ethereum-optimism/optimism/op-node/p2p/gating"
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 )
@@ -72,11 +71,7 @@ type GossipRuntimeConfig interface {
 }
 
 type PreconfGossipRuntimeConfig interface {
-	P2PSequencerAddresses() []common.Address    // CHANGE(taiko): new impl of preconf gossip runtime config
-	AllP2PSequencerAddresses() []common.Address // CHANGE(taiko): new impl of preconf gossip runtime config
-
-	Host() host.Host                           // CHANGE(taiko): new impl of preconf gossip runtime config
-	ConnGater() gating.BlockingConnectionGater // CHANGE(taiko): new impl of preconf gossip runtime config
+	P2PSequencerAddresses() []common.Address // CHANGE(taiko): new impl of preconf gossip runtime config
 }
 
 //go:generate mockery --name GossipMetricer
@@ -817,6 +812,7 @@ func verifyBlockSignature(log log.Logger, cfg *rollup.Config, runCfg GossipRunti
 		log.Warn("unexpected block author", "err", err, "peer", id, "addr", addr, "expected", expected)
 		return pubsub.ValidationReject
 	}
+
 	return pubsub.ValidationAccept
 }
 
