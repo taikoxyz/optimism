@@ -139,9 +139,9 @@ func (e *extraHost) monitorStaticPeers() {
 
 				wg.Add(1)
 				go func(addr *peer.AddrInfo) {
-					e.log.Warn("static peer disconnected, reconnecting", "peer", addr.ID)
+					e.log.Debug("static peer disconnected, reconnecting", "peer", addr.ID)
 					if err := e.dialStaticPeer(ctx, addr); err != nil {
-						e.log.Warn("error reconnecting to static peer", "peer", addr.ID, "err", err)
+						e.log.Debug("error reconnecting to static peer", "peer", addr.ID, "err", err)
 					}
 					wg.Done()
 				}(addr)
