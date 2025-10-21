@@ -78,6 +78,7 @@ type mockGossipIn struct {
 	OnUnsafeL2RequestFn                func(ctx context.Context, from peer.ID, hash common.Hash) error                  // CHANGE(taiko): add handlers
 	OnUnsafeL2ResponseFn               func(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error // CHANGE(taiko): add handlers
 	OnUnsafeL2EndOfSequencingRequestFn func(ctx context.Context, from peer.ID, epoch uint64) error                      // CHANGE(taiko): add handlers
+	OnUnsafePreconfirmationFn          func(ctx context.Context, from peer.ID, sc *SignedCommitment) error              // CHANGE(taiko): add handler
 }
 
 func (m *mockGossipIn) OnUnsafeL2Payload(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error {
@@ -107,6 +108,14 @@ func (m *mockGossipIn) OnUnsafeL2Response(ctx context.Context, from peer.ID, msg
 func (m *mockGossipIn) OnUnsafeL2EndOfSequencingRequest(ctx context.Context, from peer.ID, epoch uint64) error {
 	if m.OnUnsafeL2EndOfSequencingRequestFn != nil {
 		return m.OnUnsafeL2EndOfSequencingRequestFn(ctx, from, epoch)
+	}
+	return nil
+}
+
+// CHANGE(taiko): add handlers to implement GossipIn
+func (m *mockGossipIn) OnUnsafePreconfirmation(ctx context.Context, from peer.ID, sc *SignedCommitment) error {
+	if m.OnUnsafePreconfirmationFn != nil {
+		return m.OnUnsafePreconfirmationFn(ctx, from, sc)
 	}
 	return nil
 }

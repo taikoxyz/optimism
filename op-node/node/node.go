@@ -704,6 +704,20 @@ func (n *OpNode) OnUnsafeL2Response(ctx context.Context, from peer.ID, envelope 
 	return nil
 }
 
+// CHANGE(taiko): handle preconfirmation messages (SignedCommitment) from p2p
+func (n *OpNode) OnUnsafePreconfirmation(ctx context.Context, from peer.ID, sc *p2p.SignedCommitment) error {
+	// ignore if it's from ourselves
+	if p2pNode := n.getP2PNodeIfEnabled(); p2pNode != nil && from == p2pNode.Host().ID() {
+		return nil
+	}
+
+	// For now, just log receipt; downstream wiring can be added later.
+	// TODO(taiko): Wire this into the engine/driver once preconfirmation
+	//              application semantics are specified (EOP handling, window checks, etc.).
+	n.log.Info("Received preconfirmation from p2p", "peer", from, "slasher", sc.Commitment.SlasherAddress)
+	return nil
+}
+
 func (n *OpNode) RequestL2Range(ctx context.Context, start, end eth.L2BlockRef) error {
 	if p2pNode := n.getP2PNodeIfEnabled(); p2pNode != nil && p2pNode.AltSyncEnabled() {
 		if unixTimeStale(start.Time, 12*time.Hour) {

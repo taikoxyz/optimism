@@ -74,6 +74,12 @@ type PreconfGossipRuntimeConfig interface {
 	P2PSequencerAddresses() []common.Address // CHANGE(taiko): new impl of preconf gossip runtime config
 }
 
+// CHANGE(taiko): optional provider for lookahead schedule expectations used to validate preconfirmations
+type PreconfScheduleRuntime interface {
+	// Current committer that should sign the commitment
+	CurrentPreconferCommitter() common.Address
+}
+
 //go:generate mockery --name GossipMetricer
 type GossipMetricer interface {
 	RecordGossipEvent(evType int32)
@@ -106,15 +112,29 @@ func preconfBlocksEndOfSequencingRequestTopic(cfg *rollup.Config) string {
 	return fmt.Sprintf("/taiko/%s/0/requestEndOfSequencingPreconfBlocks", cfg.L2ChainID.String())
 }
 
-// CHANGE(taiko): create preconf blocks topic.
+// CHANGE(taiko): create preconf blocks response topic.
 func preconfBlocksResponseTopic(cfg *rollup.Config) string {
 	return fmt.Sprintf("/taiko/%s/0/responsePreconfBlocks", cfg.L2ChainID.String())
+}
+
+// CHANGE(taiko): Carries SignedCommitment messages on the v2 response path for compatibility.
+func preconfirmationsTopic(cfg *rollup.Config) string {
+	return fmt.Sprintf("/taiko/%s/0/preconfirmations", cfg.L2ChainID.String())
 }
 
 // BuildSubscriptionFilter builds a simple subscription filter,
 // to help protect against peers spamming useless subscriptions.
 func BuildSubscriptionFilter(cfg *rollup.Config) pubsub.SubscriptionFilter {
-	return pubsub.NewAllowlistSubscriptionFilter(blocksTopicV1(cfg), blocksTopicV2(cfg), blocksTopicV3(cfg), preconfBlocksTopicV1(cfg), preconfBlocksRequestTopic(cfg), preconfBlocksResponseTopic(cfg), preconfBlocksEndOfSequencingRequestTopic(cfg)) // add more topics here in the future, if any.
+	return pubsub.NewAllowlistSubscriptionFilter(
+		blocksTopicV1(cfg),
+		blocksTopicV2(cfg),
+		blocksTopicV3(cfg),
+		preconfBlocksTopicV1(cfg),
+		preconfBlocksRequestTopic(cfg),
+		preconfBlocksResponseTopic(cfg),
+		preconfirmationsTopic(cfg),
+		preconfBlocksEndOfSequencingRequestTopic(cfg),
+	) // add more topics here in the future, if any.
 }
 
 var msgBufPool = sync.Pool{New: func() any {
@@ -306,12 +326,6 @@ func (se *seenEpochs) markSeen(epoch uint64) {
 	} else {
 		se.epochs[epoch]++
 	}
-}
-
-// CHANGE(taiko): add seenHashes cache.
-type seenHashes struct {
-	sync.Mutex
-	blockHashes map[common.Hash]uint64
 }
 
 // CHANGE(taiko): add preconfBlocks topic validator
@@ -552,6 +566,93 @@ func BuildPreconfBlocksRequestValidator(log log.Logger, cfg *rollup.Config, runC
 		// Mark seen after passing rate limit.
 		seenHash.Add(hash, now)
 		message.ValidatorData = hash
+		return pubsub.ValidationAccept
+	}
+}
+
+// CHANGE(taiko): validator for preconfirmations (SignedCommitment)
+func BuildPreconfirmationValidator(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig) pubsub.ValidatorEx {
+	buckets, err := lru.New[peer.ID, *rateBucket](defaultLRUCacheSize) // per‑peer token buckets
+	if err != nil {
+		panic(fmt.Errorf("per‑peer buckets: %w", err))
+	}
+	seenMsg, err := lru.New[common.Hash, time.Time](defaultLRUCacheSize)
+	if err != nil {
+		panic(fmt.Errorf("seen‑msg LRU: %w", err))
+	}
+
+	var bucketsMu sync.Mutex
+	rate := float64(refillPerMin) / 60.0 // tokens per second
+
+	return func(ctx context.Context, id peer.ID, message *pubsub.Message) pubsub.ValidationResult {
+		now := time.Now()
+		msgHash := crypto.Keccak256Hash(message.Data)
+		if t, ok := seenMsg.Get(msgHash); ok && now.Sub(t) < window {
+			return pubsub.ValidationIgnore
+		}
+
+		// Per-peer token bucket
+		bucketsMu.Lock()
+		defer bucketsMu.Unlock()
+		cap := float64(maxTokens)
+		b, ok := buckets.Get(id)
+		if !ok {
+			b = &rateBucket{credit: cap, last: now}
+			buckets.Add(id, b)
+		} else {
+			refillBucket(b, now, rate, cap)
+		}
+		if !consumeToken(b, 1.0) {
+			return pubsub.ValidationIgnore
+		}
+
+		// Decode SSZ SignedCommitment
+		var sc SignedCommitment
+		if err := sc.UnmarshalSSZ(uint32(len(message.Data)), bytes.NewReader(message.Data)); err != nil {
+			log.Warn("invalid preconfirmation SSZ", "err", err, "peer", id)
+			return pubsub.ValidationReject
+		}
+		if len(sc.Signature) != expectedSigLen {
+			return pubsub.ValidationReject
+		}
+
+		// Verify signature and authorize (schedule/whitelist)
+		if res := verifyPreconfirmationSignature(log, cfg, runCfg, id, &sc); res != pubsub.ValidationAccept {
+			return res
+		}
+
+		// Business-logic validation of the commitment payload
+		pc := sc.Commitment.Preconf
+		// Basic nil checks for big.Int fields
+		if pc.BlockNumber == nil || pc.AnchorBlockNumber == nil || pc.ParentSubmissionWindowEnd == nil || pc.SubmissionWindowEnd == nil {
+			log.Warn("preconf has nil numeric fields", "peer", id)
+			return pubsub.ValidationReject
+		}
+		// Non-negative / sensible ordering
+		if pc.BlockNumber.Sign() <= 0 {
+			log.Warn("preconf has non-positive block number", "peer", id)
+			return pubsub.ValidationReject
+		}
+		if pc.AnchorBlockNumber.Sign() < 0 {
+			log.Warn("preconf has negative anchor block number", "peer", id)
+			return pubsub.ValidationReject
+		}
+		if pc.BlockNumber.Cmp(pc.AnchorBlockNumber) < 0 {
+			log.Warn("preconf anchor exceeds block number", "peer", id, "block", pc.BlockNumber, "anchor", pc.AnchorBlockNumber)
+			return pubsub.ValidationReject
+		}
+		if pc.SubmissionWindowEnd.Cmp(pc.ParentSubmissionWindowEnd) < 0 {
+			log.Warn("preconf submission window regress", "peer", id)
+			return pubsub.ValidationReject
+		}
+		// Hash presence
+		if pc.ParentRawTxListHash == (common.Hash{}) || pc.RawTxListHash == (common.Hash{}) {
+			log.Warn("preconf missing tx list hashes", "peer", id)
+			return pubsub.ValidationReject
+		}
+
+		seenMsg.Add(msgHash, now)
+		message.ValidatorData = &sc
 		return pubsub.ValidationAccept
 	}
 }
@@ -860,11 +961,59 @@ func verifyBlockResponseSignature(log log.Logger, cfg *rollup.Config, runCfg Gos
 	return pubsub.ValidationAccept
 }
 
+// CHANGE(taiko): verifies the preconfirmation commitment signature
+func verifyPreconfirmationSignature(log log.Logger, cfg *rollup.Config, runCfg GossipRuntimeConfig, id peer.ID, sc *SignedCommitment) pubsub.ValidationResult {
+	// Marshal commitment (without signature)
+	var buf bytes.Buffer
+	if _, err := sc.Commitment.MarshalSSZ(&buf); err != nil {
+		log.Warn("failed to encode preconf commitment for signing", "err", err, "peer", id)
+		return pubsub.ValidationReject
+	}
+
+	signingHash, err := BlockSigningHash(cfg, buf.Bytes())
+	if err != nil {
+		log.Warn("failed to compute preconf signing hash", "err", err, "peer", id)
+		return pubsub.ValidationReject
+	}
+
+	pub, err := crypto.SigToPub(signingHash[:], sc.Signature)
+	if err != nil {
+		log.Warn("invalid preconf signature", "err", err, "peer", id)
+		return pubsub.ValidationReject
+	}
+	addr := crypto.PubkeyToAddress(*pub)
+
+	// If schedule provides a committer, enforce it strictly.
+	if sched, ok := runCfg.(PreconfScheduleRuntime); ok {
+		if committer := sched.CurrentPreconferCommitter(); committer != (common.Address{}) {
+			if addr != committer {
+				return pubsub.ValidationReject
+			}
+			return pubsub.ValidationAccept
+		}
+	}
+
+	// No schedule available (or zero address): fallback to whitelist if configured.
+	if pcfg, ok := runCfg.(PreconfGossipRuntimeConfig); ok {
+		addrs := pcfg.P2PSequencerAddresses()
+		if len(addrs) == 0 {
+			return pubsub.ValidationReject
+		}
+		if slices.Contains(addrs, addr) {
+			return pubsub.ValidationAccept
+		}
+	}
+
+	return pubsub.ValidationReject
+}
+
 type GossipIn interface {
 	OnUnsafeL2Payload(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error
 	OnUnsafeL2Request(ctx context.Context, from peer.ID, msg common.Hash) error
 	OnUnsafeL2EndOfSequencingRequest(ctx context.Context, from peer.ID, epoch uint64) error
 	OnUnsafeL2Response(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error
+	// CHANGE(taiko): new preconfirmation handler
+	OnUnsafePreconfirmation(ctx context.Context, from peer.ID, msg *SignedCommitment) error
 }
 
 type GossipTopicInfo interface {
@@ -880,6 +1029,7 @@ type GossipOut interface {
 	PublishL2RequestResponse(ctx context.Context, msg *eth.ExecutionPayloadEnvelope, signer Signer) error
 	PublishL2Request(ctx context.Context, hash common.Hash) error            // TODO: add signer, sign request
 	PublishL2EndOfSequencingRequest(ctx context.Context, epoch uint64) error // TODO: add signer, sign request
+	PublishPreconfirmation(ctx context.Context, commit PreconfCommitment, signer Signer) error
 	Close() error
 }
 
@@ -914,6 +1064,7 @@ type publisher struct {
 	preconfBlocksV1                     *blockTopic
 	preconfBlocksRequest                *blockTopic
 	preconfBlocksResponse               *blockTopic
+	preconfBlocksResponseV2             *blockTopic
 	preconfBlocksEndOfSequencingRequest *blockTopic
 
 	runCfg GossipRuntimeConfig
@@ -1037,6 +1188,37 @@ func (p *publisher) PublishL2RequestResponse(ctx context.Context, envelope *eth.
 	return p.preconfBlocksResponse.topic.Publish(ctx, out)
 }
 
+// CHANGE(taiko): publish SignedCommitment (preconfirmation) on the request topic using SSZ
+func (p *publisher) PublishPreconfirmation(ctx context.Context, commit PreconfCommitment, signer Signer) error {
+	// 1) SSZ-encode the commitment to compute signing hash
+	var commitBuf bytes.Buffer
+	if _, err := commit.MarshalSSZ(&commitBuf); err != nil {
+		return fmt.Errorf("encode preconf commitment: %w", err)
+	}
+
+	// 2) Sign the commitment bytes
+	if signer == nil {
+		return errors.New("nil signer for preconfirmation")
+	}
+	sigBytes, err := signer.Sign(ctx, SigningDomainBlocksV1, p.cfg.L2ChainID, commitBuf.Bytes())
+	if err != nil {
+		return fmt.Errorf("sign preconf commitment: %w", err)
+	}
+	if len(sigBytes) != expectedSigLen {
+		return fmt.Errorf("invalid signature length %d, want %d", len(sigBytes), expectedSigLen)
+	}
+
+	// 3) Build signed commitment and encode SSZ
+	sc := SignedCommitment{Commitment: commit, Signature: sigBytes[:]}
+	var fullBuf bytes.Buffer
+	if _, err := sc.MarshalSSZ(&fullBuf); err != nil {
+		return fmt.Errorf("encode signed preconf commitment: %w", err)
+	}
+
+	// 4) Publish raw bytes (no snappy) on v2 response topic
+	return p.preconfBlocksResponseV2.topic.Publish(ctx, fullBuf.Bytes())
+}
+
 func (p *publisher) Close() error {
 	p.p2pCancel()
 	e1 := p.blocksV1.Close()
@@ -1080,7 +1262,7 @@ func JoinGossip(self peer.ID, ps *pubsub.PubSub, log log.Logger, cfg *rollup.Con
 		return nil, fmt.Errorf("failed to setup preconf blocks v1 p2p: %w", err)
 	}
 
-	// CHANGE(taiko): setup preconf blocks request topic
+	// CHANGE(taiko): setup preconf blocks request topic (legacy hash requests)
 	preconfBlocksRequestLogger := log.New("topic", "preconfBlockRequest")
 	preconfBlocksRequestValidator := guardGossipValidator(preconfBlocksRequestLogger, logValidationResult(self, "validated preconfBlocksRequest", preconfBlocksRequestLogger, BuildPreconfBlocksRequestValidator(preconfBlocksRequestLogger, cfg, runCfg)))
 	preconfBlocksRequest, err := newRequestTopic(p2pCtx, preconfBlocksRequestTopic(cfg), ps, preconfBlocksRequestLogger, gossipIn, preconfBlocksRequestValidator)
@@ -1107,6 +1289,15 @@ func JoinGossip(self peer.ID, ps *pubsub.PubSub, log log.Logger, cfg *rollup.Con
 		return nil, fmt.Errorf("failed to setup preconf blocks request p2p: %w", err)
 	}
 
+	// CHANGE(taiko): setup v2 preconfirmation topic (SignedCommitment)
+	preconfsLogger := log.New("topic", "preconfirmations")
+	preconfsValidator := guardGossipValidator(preconfsLogger, logValidationResult(self, "validated preconfirmation", preconfsLogger, BuildPreconfirmationValidator(preconfsLogger, cfg, runCfg)))
+	preconfBlocksResponseV2, err := newPreconfirmationTopic(p2pCtx, preconfirmationsTopic(cfg), ps, preconfsLogger, gossipIn, preconfsValidator)
+	if err != nil {
+		p2pCancel()
+		return nil, fmt.Errorf("failed to setup preconf blocks response v2 (SignedCommitment) p2p: %w", err)
+	}
+
 	return &publisher{
 		log:                                 log,
 		cfg:                                 cfg,
@@ -1117,6 +1308,7 @@ func JoinGossip(self peer.ID, ps *pubsub.PubSub, log log.Logger, cfg *rollup.Con
 		preconfBlocksV1:                     preconfBlocksV1,
 		preconfBlocksRequest:                preconfBlocksRequest,
 		preconfBlocksResponse:               preconfBlocksResponse,
+		preconfBlocksResponseV2:             preconfBlocksResponseV2,
 		preconfBlocksEndOfSequencingRequest: preconfBlocksEndOfSequencingRequest,
 		runCfg:                              runCfg,
 	}, nil
@@ -1157,6 +1349,45 @@ func newRequestTopic(ctx context.Context, topicId string, ps *pubsub.PubSub, log
 	return &blockTopic{
 		topic:  topic,
 		events: blocksTopicEvents,
+		sub:    subscription,
+	}, nil
+}
+
+// CHANGE(taiko): create preconfirmation topic (SignedCommitment)
+func newPreconfirmationTopic(ctx context.Context, topicId string, ps *pubsub.PubSub, log log.Logger, gossipIn GossipIn, validator pubsub.ValidatorEx) (*blockTopic, error) {
+	err := ps.RegisterTopicValidator(topicId,
+		validator,
+		pubsub.WithValidatorTimeout(3*time.Second),
+		pubsub.WithValidatorConcurrency(4))
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to register gossip topic: %w", err)
+	}
+
+	topic, err := ps.Join(topicId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to join gossip topic: %w", err)
+	}
+
+	topicEvents, err := topic.EventHandler()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create preconfirmation gossip topic handler: %w", err)
+	}
+
+	go LogTopicEvents(ctx, log, topicEvents)
+
+	subscription, err := topic.Subscribe(pubsub.WithBufferSize(defaultBufferSize))
+	if err != nil {
+		err = errors.Join(err, topic.Close())
+		return nil, fmt.Errorf("failed to subscribe to preconfirmation gossip topic: %w", err)
+	}
+
+	subscriber := MakeSubscriber(log, PreconfirmationHandler(gossipIn.OnUnsafePreconfirmation))
+	go subscriber(ctx, subscription)
+
+	return &blockTopic{
+		topic:  topic,
+		events: topicEvents,
 		sub:    subscription,
 	}, nil
 }
@@ -1260,6 +1491,17 @@ func RequestsHandler(onRequest func(ctx context.Context, from peer.ID, hash comm
 			return fmt.Errorf("expected topic validator to parse and validate data into hash, but got %T", msg)
 		}
 		return onRequest(ctx, from, payload)
+	}
+}
+
+// CHANGE(taiko): preconfirmation handler
+func PreconfirmationHandler(on func(ctx context.Context, from peer.ID, msg *SignedCommitment) error) MessageHandler {
+	return func(ctx context.Context, from peer.ID, msg any) error {
+		sc, ok := msg.(*SignedCommitment)
+		if !ok {
+			return fmt.Errorf("expected topic validator to parse SignedCommitment, but got %T", msg)
+		}
+		return on(ctx, from, sc)
 	}
 }
 
