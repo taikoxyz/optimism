@@ -118,8 +118,8 @@ func preconfBlocksResponseTopic(cfg *rollup.Config) string {
 }
 
 // CHANGE(taiko): Carries SignedCommitment messages on the v2 response path for compatibility.
-func preconfirmationsTopic(cfg *rollup.Config) string {
-	return fmt.Sprintf("/taiko/%s/0/preconfirmations", cfg.L2ChainID.String())
+func preconfirmationsCommitmentTopic(cfg *rollup.Config) string {
+	return fmt.Sprintf("/taiko/%s/0/preconfirmationCommitments", cfg.L2ChainID.String())
 }
 
 // BuildSubscriptionFilter builds a simple subscription filter,
@@ -132,7 +132,7 @@ func BuildSubscriptionFilter(cfg *rollup.Config) pubsub.SubscriptionFilter {
 		preconfBlocksTopicV1(cfg),
 		preconfBlocksRequestTopic(cfg),
 		preconfBlocksResponseTopic(cfg),
-		preconfirmationsTopic(cfg),
+		preconfirmationsCommitmentTopic(cfg),
 		preconfBlocksEndOfSequencingRequestTopic(cfg),
 	) // add more topics here in the future, if any.
 }
@@ -986,25 +986,12 @@ func verifyPreconfirmationSignature(log log.Logger, cfg *rollup.Config, runCfg G
 	// If schedule provides a committer, enforce it strictly.
 	if sched, ok := runCfg.(PreconfScheduleRuntime); ok {
 		if committer := sched.CurrentPreconferCommitter(); committer != (common.Address{}) {
-			if addr != committer {
-				return pubsub.ValidationReject
+			if addr == committer {
+				return pubsub.ValidationAccept
 			}
-			return pubsub.ValidationAccept
 		}
 	}
-
-	// No schedule available (or zero address): fallback to whitelist if configured.
-	if pcfg, ok := runCfg.(PreconfGossipRuntimeConfig); ok {
-		addrs := pcfg.P2PSequencerAddresses()
-		if len(addrs) == 0 {
-			return pubsub.ValidationReject
-		}
-		if slices.Contains(addrs, addr) {
-			return pubsub.ValidationAccept
-		}
-	}
-
-	return pubsub.ValidationReject
+	return pubsub.ValidationAccept
 }
 
 type GossipIn interface {
@@ -1013,7 +1000,7 @@ type GossipIn interface {
 	OnUnsafeL2EndOfSequencingRequest(ctx context.Context, from peer.ID, epoch uint64) error
 	OnUnsafeL2Response(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error
 	// CHANGE(taiko): new preconfirmation handler
-	OnUnsafePreconfirmation(ctx context.Context, from peer.ID, msg *SignedCommitment) error
+	OnUnsafePreconfirmationCommitment(ctx context.Context, from peer.ID, msg *SignedCommitment) error
 }
 
 type GossipTopicInfo interface {
@@ -1029,7 +1016,7 @@ type GossipOut interface {
 	PublishL2RequestResponse(ctx context.Context, msg *eth.ExecutionPayloadEnvelope, signer Signer) error
 	PublishL2Request(ctx context.Context, hash common.Hash) error            // TODO: add signer, sign request
 	PublishL2EndOfSequencingRequest(ctx context.Context, epoch uint64) error // TODO: add signer, sign request
-	PublishPreconfirmation(ctx context.Context, commit PreconfCommitment, signer Signer) error
+	PublishPreconfirmation(ctx context.Context, sc SignedCommitment) error
 	Close() error
 }
 
@@ -1188,34 +1175,19 @@ func (p *publisher) PublishL2RequestResponse(ctx context.Context, envelope *eth.
 	return p.preconfBlocksResponse.topic.Publish(ctx, out)
 }
 
-// CHANGE(taiko): publish SignedCommitment (preconfirmation) on the request topic using SSZ
-func (p *publisher) PublishPreconfirmation(ctx context.Context, commit PreconfCommitment, signer Signer) error {
-	// 1) SSZ-encode the commitment to compute signing hash
-	var commitBuf bytes.Buffer
-	if _, err := commit.MarshalSSZ(&commitBuf); err != nil {
-		return fmt.Errorf("encode preconf commitment: %w", err)
+// CHANGE(taiko): publish SignedCommitment (preconfirmation) provided by sidecar using SSZ
+func (p *publisher) PublishPreconfirmation(ctx context.Context, sc SignedCommitment) error {
+	if len(sc.Signature) != expectedSigLen {
+		return fmt.Errorf("invalid signature length %d, want %d", len(sc.Signature), expectedSigLen)
 	}
 
-	// 2) Sign the commitment bytes
-	if signer == nil {
-		return errors.New("nil signer for preconfirmation")
-	}
-	sigBytes, err := signer.Sign(ctx, SigningDomainBlocksV1, p.cfg.L2ChainID, commitBuf.Bytes())
-	if err != nil {
-		return fmt.Errorf("sign preconf commitment: %w", err)
-	}
-	if len(sigBytes) != expectedSigLen {
-		return fmt.Errorf("invalid signature length %d, want %d", len(sigBytes), expectedSigLen)
-	}
-
-	// 3) Build signed commitment and encode SSZ
-	sc := SignedCommitment{Commitment: commit, Signature: sigBytes[:]}
+	// Encode full SignedCommitment (commitment + signature)
 	var fullBuf bytes.Buffer
 	if _, err := sc.MarshalSSZ(&fullBuf); err != nil {
 		return fmt.Errorf("encode signed preconf commitment: %w", err)
 	}
 
-	// 4) Publish raw bytes (no snappy) on v2 response topic
+	// Publish raw bytes (no snappy) on v2 response topic
 	return p.preconfBlocksResponseV2.topic.Publish(ctx, fullBuf.Bytes())
 }
 
@@ -1292,7 +1264,7 @@ func JoinGossip(self peer.ID, ps *pubsub.PubSub, log log.Logger, cfg *rollup.Con
 	// CHANGE(taiko): setup v2 preconfirmation topic (SignedCommitment)
 	preconfsLogger := log.New("topic", "preconfirmations")
 	preconfsValidator := guardGossipValidator(preconfsLogger, logValidationResult(self, "validated preconfirmation", preconfsLogger, BuildPreconfirmationValidator(preconfsLogger, cfg, runCfg)))
-	preconfBlocksResponseV2, err := newPreconfirmationTopic(p2pCtx, preconfirmationsTopic(cfg), ps, preconfsLogger, gossipIn, preconfsValidator)
+	preconfBlocksResponseV2, err := newPreconfirmationTopic(p2pCtx, preconfirmationsCommitmentTopic(cfg), ps, preconfsLogger, gossipIn, preconfsValidator)
 	if err != nil {
 		p2pCancel()
 		return nil, fmt.Errorf("failed to setup preconf blocks response v2 (SignedCommitment) p2p: %w", err)
@@ -1382,7 +1354,7 @@ func newPreconfirmationTopic(ctx context.Context, topicId string, ps *pubsub.Pub
 		return nil, fmt.Errorf("failed to subscribe to preconfirmation gossip topic: %w", err)
 	}
 
-	subscriber := MakeSubscriber(log, PreconfirmationHandler(gossipIn.OnUnsafePreconfirmation))
+	subscriber := MakeSubscriber(log, PreconfirmationHandler(gossipIn.OnUnsafePreconfirmationCommitment))
 	go subscriber(ctx, subscription)
 
 	return &blockTopic{

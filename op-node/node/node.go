@@ -705,7 +705,7 @@ func (n *OpNode) OnUnsafeL2Response(ctx context.Context, from peer.ID, envelope 
 }
 
 // CHANGE(taiko): handle preconfirmation messages (SignedCommitment) from p2p
-func (n *OpNode) OnUnsafePreconfirmation(ctx context.Context, from peer.ID, sc *p2p.SignedCommitment) error {
+func (n *OpNode) OnUnsafePreconfirmationCommitment(ctx context.Context, from peer.ID, sc *p2p.SignedCommitment) error {
 	// ignore if it's from ourselves
 	if p2pNode := n.getP2PNodeIfEnabled(); p2pNode != nil && from == p2pNode.Host().ID() {
 		return nil

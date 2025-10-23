@@ -74,11 +74,11 @@ func TestP2PSimple(t *testing.T) {
 }
 
 type mockGossipIn struct {
-	OnUnsafeL2PayloadFn                func(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error
-	OnUnsafeL2RequestFn                func(ctx context.Context, from peer.ID, hash common.Hash) error                  // CHANGE(taiko): add handlers
-	OnUnsafeL2ResponseFn               func(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error // CHANGE(taiko): add handlers
-	OnUnsafeL2EndOfSequencingRequestFn func(ctx context.Context, from peer.ID, epoch uint64) error                      // CHANGE(taiko): add handlers
-	OnUnsafePreconfirmationFn          func(ctx context.Context, from peer.ID, sc *SignedCommitment) error              // CHANGE(taiko): add handler
+	OnUnsafeL2PayloadFn                 func(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error
+	OnUnsafeL2RequestFn                 func(ctx context.Context, from peer.ID, hash common.Hash) error                  // CHANGE(taiko): add handlers
+	OnUnsafeL2ResponseFn                func(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error // CHANGE(taiko): add handlers
+	OnUnsafeL2EndOfSequencingRequestFn  func(ctx context.Context, from peer.ID, epoch uint64) error                      // CHANGE(taiko): add handlers
+	OnUnsafePreconfirmationCommitmentFn func(ctx context.Context, from peer.ID, sc *SignedCommitment) error              // CHANGE(taiko): add handler
 }
 
 func (m *mockGossipIn) OnUnsafeL2Payload(ctx context.Context, from peer.ID, msg *eth.ExecutionPayloadEnvelope) error {
@@ -113,9 +113,9 @@ func (m *mockGossipIn) OnUnsafeL2EndOfSequencingRequest(ctx context.Context, fro
 }
 
 // CHANGE(taiko): add handlers to implement GossipIn
-func (m *mockGossipIn) OnUnsafePreconfirmation(ctx context.Context, from peer.ID, sc *SignedCommitment) error {
-	if m.OnUnsafePreconfirmationFn != nil {
-		return m.OnUnsafePreconfirmationFn(ctx, from, sc)
+func (m *mockGossipIn) OnUnsafePreconfirmationCommitment(ctx context.Context, from peer.ID, sc *SignedCommitment) error {
+	if m.OnUnsafePreconfirmationCommitmentFn != nil {
+		return m.OnUnsafePreconfirmationCommitmentFn(ctx, from, sc)
 	}
 	return nil
 }
