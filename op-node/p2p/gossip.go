@@ -991,7 +991,7 @@ func verifyPreconfirmationSignature(log log.Logger, cfg *rollup.Config, runCfg G
 			}
 		}
 	}
-	return pubsub.ValidationAccept
+	return pubsub.ValidationReject
 }
 
 type GossipIn interface {
@@ -1016,7 +1016,7 @@ type GossipOut interface {
 	PublishL2RequestResponse(ctx context.Context, msg *eth.ExecutionPayloadEnvelope, signer Signer) error
 	PublishL2Request(ctx context.Context, hash common.Hash) error            // TODO: add signer, sign request
 	PublishL2EndOfSequencingRequest(ctx context.Context, epoch uint64) error // TODO: add signer, sign request
-	PublishPreconfirmation(ctx context.Context, sc SignedCommitment) error
+	PublishPreconfirmationCommitment(ctx context.Context, sc SignedCommitment) error
 	Close() error
 }
 
@@ -1176,7 +1176,7 @@ func (p *publisher) PublishL2RequestResponse(ctx context.Context, envelope *eth.
 }
 
 // CHANGE(taiko): publish SignedCommitment (preconfirmation) provided by sidecar using SSZ
-func (p *publisher) PublishPreconfirmation(ctx context.Context, sc SignedCommitment) error {
+func (p *publisher) PublishPreconfirmationCommitment(ctx context.Context, sc SignedCommitment) error {
 	if len(sc.Signature) != expectedSigLen {
 		return fmt.Errorf("invalid signature length %d, want %d", len(sc.Signature), expectedSigLen)
 	}
