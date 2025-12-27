@@ -33,6 +33,7 @@ packages/contracts-bedrock/deployments/anvil
 !.env.example
 !.envrc.example
 *.log
+.code/
 
 .devnet*
 
