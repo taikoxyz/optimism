@@ -5,7 +5,8 @@ import (
 	"errors"
 	"math/big"
 
-	"github.com/ethereum-optimism/optimism/op-service/eth"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/rpc"
 )
 
 type GasPriceEstimatorFn func(ctx context.Context, backend ETHBackend) (*big.Int, *big.Int, *big.Int, error)
@@ -26,8 +27,34 @@ func DefaultGasPriceEstimatorFn(ctx context.Context, backend ETHBackend) (*big.I
 
 	var blobFee *big.Int
 	if head.ExcessBlobGas != nil {
-		blobFee = eth.CalcBlobFee(*head.ExcessBlobGas)
+		var err error
+		blobFee, err = fetchBlobBaseFee(ctx, backend)
+		if err != nil {
+			return nil, nil, nil, err
+		}
 	}
 
 	return tip, head.BaseFee, blobFee, nil
+}
+
+type blobBaseFeeBackend interface {
+	BlobBaseFee(ctx context.Context) (*big.Int, error)
+}
+
+type rpcBackend interface {
+	Client() *rpc.Client
+}
+
+func fetchBlobBaseFee(ctx context.Context, backend ETHBackend) (*big.Int, error) {
+	if b, ok := backend.(blobBaseFeeBackend); ok {
+		return b.BlobBaseFee(ctx)
+	}
+	if b, ok := backend.(rpcBackend); ok {
+		var result hexutil.Big
+		if err := b.Client().CallContext(ctx, &result, "eth_blobBaseFee"); err != nil {
+			return nil, err
+		}
+		return (*big.Int)(&result), nil
+	}
+	return nil, errors.New("backend does not support blob base fee rpc")
 }
