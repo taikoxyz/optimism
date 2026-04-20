@@ -267,6 +267,12 @@ func (envelope *ExecutionPayloadEnvelope) CheckBlockHash() (actual common.Hash, 
 	hasher := trie.NewStackTrie(nil)
 	txHash := types.DeriveSha(rawTransactions(payload.Transactions), hasher)
 
+	// CHANGE(taiko): Uzen preserves L1 blockValue on header.Difficulty via HeaderDifficulty.
+	difficulty := common.Big0
+	if envelope.HeaderDifficulty != nil && envelope.HeaderDifficulty.Sign() != 0 {
+		difficulty = new(big.Int).Set(envelope.HeaderDifficulty)
+	}
+
 	header := types.Header{
 		ParentHash:       payload.ParentHash,
 		UncleHash:        types.EmptyUncleHash,
@@ -275,7 +281,7 @@ func (envelope *ExecutionPayloadEnvelope) CheckBlockHash() (actual common.Hash, 
 		TxHash:           txHash,
 		ReceiptHash:      common.Hash(payload.ReceiptsRoot),
 		Bloom:            types.Bloom(payload.LogsBloom),
-		Difficulty:       common.Big0, // zeroed, proof-of-work legacy
+		Difficulty:       difficulty,
 		Number:           big.NewInt(int64(payload.BlockNumber)),
 		GasLimit:         uint64(payload.GasLimit),
 		GasUsed:          uint64(payload.GasUsed),
