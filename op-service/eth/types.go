@@ -208,7 +208,8 @@ type ExecutionPayloadEnvelope struct {
 	IsForcedInclusion     *bool             `json:"isForcedInclusion,omitempty"` // CHANGE(taiko): add IFI marker
 	ParentBeaconBlockRoot *common.Hash      `json:"parentBeaconBlockRoot,omitempty"`
 	ExecutionPayload      *ExecutionPayload `json:"executionPayload"`
-	Signature             *[65]byte         `json:"signature,omitempty"` // CHANGE(taiko): add signature to envelope
+	Signature             *[65]byte         `json:"signature,omitempty"`        // CHANGE(taiko): add signature to envelope
+	HeaderDifficulty      *big.Int          `json:"headerDifficulty,omitempty"` // CHANGE(taiko): Uzen L1 blockValue preserved on header.Difficulty
 }
 
 type ExecutionPayload struct {
