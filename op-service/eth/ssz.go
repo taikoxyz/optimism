@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -21,8 +22,9 @@ const ( // iota is reset to 0
 )
 
 const (
-	hdrSize         = 2 + common.HashLength // 2 flag bytes + 32-byte root
-	signatureLength = 65
+	hdrSize                = 2 + common.HashLength // 2 flag bytes + 32-byte root
+	signatureLength        = 65
+	headerDifficultyLength = 32 // CHANGE(taiko): Uzen HeaderDifficulty (big-endian uint256)
 )
 
 // ExecutionPayload and ExecutionPayloadEnvelope are the only SSZ types we have to marshal/unmarshal,
@@ -443,7 +445,8 @@ func unmarshalTransactions(in []byte) (txs []Data, err error) {
 }
 
 // change(TAIKO):
-// UnmarshalSSZ reads 2B flags → nil/true and sig bit, then root, then payload, then sig
+// UnmarshalSSZ reads 2B flags → nil/true and sig bit, then root, optionally
+// reads 32B HeaderDifficulty when the flag is set, then payload, then sig.
 func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader) error {
 	if scope < hdrSize {
 		return fmt.Errorf("scope (%d) smaller than header size (%d)", scope, hdrSize)
@@ -461,6 +464,9 @@ func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader
 		envelope.EndOfSequencing = &t
 	}
 
+	// CHANGE(taiko): flag0 bit 0x02 indicates a 32-byte Uzen HeaderDifficulty follows the root.
+	hasHeaderDifficulty := flags[0]&0x02 != 0
+
 	// CHANGE(taiko): second bit is end of sequencing
 	if flags[1]&0x01 != 0 {
 		f := true
@@ -476,10 +482,22 @@ func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader
 	}
 	envelope.ParentBeaconBlockRoot = &root
 
-	// cCHANGE(taiko): need to minus signatureLength from payloadScope is we have a sig
+	// CHANGE(taiko): read the optional HeaderDifficulty (Uzen) before the payload.
+	if hasHeaderDifficulty {
+		var diff [headerDifficultyLength]byte
+		if _, err := io.ReadFull(r, diff[:]); err != nil {
+			return fmt.Errorf("read headerDifficulty: %w", err)
+		}
+		envelope.HeaderDifficulty = new(big.Int).SetBytes(diff[:])
+	}
+
+	// CHANGE(taiko): subtract signatureLength and HeaderDifficulty length from payloadScope when present.
 	payloadScope := scope - hdrSize
 	if hasSig {
 		payloadScope -= signatureLength
+	}
+	if hasHeaderDifficulty {
+		payloadScope -= headerDifficultyLength
 	}
 
 	payload := new(ExecutionPayload)
@@ -501,7 +519,7 @@ func (envelope *ExecutionPayloadEnvelope) UnmarshalSSZ(scope uint32, r io.Reader
 }
 
 // CHANGE(taiko):
-// MarshalSSZ writes 2B flag + 32B root + payload + signature
+// MarshalSSZ writes 2B flag + 32B root + optional 32B HeaderDifficulty (Uzen) + payload + signature.
 func (envelope *ExecutionPayloadEnvelope) MarshalSSZ(w io.Writer) (n int, err error) {
 	// 0) guard against nil payload
 	if envelope.ExecutionPayload == nil {
@@ -513,6 +531,14 @@ func (envelope *ExecutionPayloadEnvelope) MarshalSSZ(w io.Writer) (n int, err er
 	if envelope.EndOfSequencing != nil && *envelope.EndOfSequencing {
 		flags[0] |= 0x01
 	}
+
+	// CHANGE(taiko): emit HeaderDifficulty (Uzen) only when set to a non-zero value.
+	// Pre-Uzen (Shasta) blocks leave this nil and are byte-identical to the prior wire format.
+	hasHeaderDifficulty := envelope.HeaderDifficulty != nil && envelope.HeaderDifficulty.Sign() != 0
+	if hasHeaderDifficulty {
+		flags[0] |= 0x02
+	}
+
 	if envelope.IsForcedInclusion != nil && *envelope.IsForcedInclusion {
 		flags[1] |= 0x01
 	}
@@ -536,6 +562,21 @@ func (envelope *ExecutionPayloadEnvelope) MarshalSSZ(w io.Writer) (n int, err er
 	if err != nil {
 		return n, fmt.Errorf("write parentBeaconBlockRoot: %w", err)
 	}
+
+	// CHANGE(taiko): write the 32-byte big-endian HeaderDifficulty when present.
+	if hasHeaderDifficulty {
+		var diff [headerDifficultyLength]byte
+		if envelope.HeaderDifficulty.BitLen() > headerDifficultyLength*8 {
+			return n, fmt.Errorf("headerDifficulty exceeds %d bits", headerDifficultyLength*8)
+		}
+		envelope.HeaderDifficulty.FillBytes(diff[:])
+		m, err = w.Write(diff[:])
+		n += m
+		if err != nil {
+			return n, fmt.Errorf("write headerDifficulty: %w", err)
+		}
+	}
+
 	m, err = envelope.ExecutionPayload.MarshalSSZ(w)
 	n += m
 	if err != nil {

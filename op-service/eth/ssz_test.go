@@ -3,9 +3,9 @@ package eth
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -431,12 +431,12 @@ func TestMarshalUnmarshalWithdrawals(t *testing.T) {
 func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 	hash := common.HexToHash("0x123")
 
-	zero := uint64(0)
-	// base payload factory
+	// CHANGE(taiko): the envelope UnmarshalSSZ hardcodes BlockV1, so the test payload
+	// must not carry withdrawals or blob-gas fields. Using the withdrawals factory here
+	// produces a V3 payload that fails to roundtrip through the envelope.
 	makePayload := func() *ExecutionPayload {
 		p := createPayloadWithWithdrawals(&types.Withdrawals{})
-		p.ExcessBlobGas = (*Uint64Quantity)(&zero)
-		p.BlobGasUsed = (*Uint64Quantity)(&zero)
+		p.Withdrawals = nil
 		return p
 	}
 
@@ -484,6 +484,37 @@ func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 		Signature:             &dummySig,
 	}
 
+	// CHANGE(taiko): Uzen envelope carrying HeaderDifficulty (L1 blockValue) on the wire.
+	headerDifficulty := new(big.Int).SetBytes([]byte{
+		0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+		0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10,
+		0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+		0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
+	})
+	validInputWithHeaderDifficulty := &ExecutionPayloadEnvelope{
+		ParentBeaconBlockRoot: &hash,
+		ExecutionPayload:      makePayload(),
+		HeaderDifficulty:      headerDifficulty,
+	}
+
+	// CHANGE(taiko): HeaderDifficulty + signature + markers set simultaneously.
+	validInputWithHeaderDifficultyAndSig := &ExecutionPayloadEnvelope{
+		ParentBeaconBlockRoot: &hash,
+		ExecutionPayload:      makePayload(),
+		EndOfSequencing:       &endOfSequencing,
+		IsForcedInclusion:     &isForcedInclusion,
+		HeaderDifficulty:      headerDifficulty,
+		Signature:             &dummySig,
+	}
+
+	// CHANGE(taiko): a zero HeaderDifficulty must be treated the same as nil (Shasta invariant).
+	zeroDifficulty := new(big.Int)
+	validInputWithZeroDifficulty := &ExecutionPayloadEnvelope{
+		ParentBeaconBlockRoot: &hash,
+		ExecutionPayload:      makePayload(),
+		HeaderDifficulty:      zeroDifficulty,
+	}
+
 	missingExecutionPayload := &ExecutionPayloadEnvelope{
 		ParentBeaconBlockRoot: &hash,
 		ExecutionPayload:      nil,
@@ -497,14 +528,18 @@ func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 		wantEndOfSequencing   *bool
 		wantIsForcedInclusion *bool
 		wantSignature         *[65]byte
+		wantHeaderDifficulty  *big.Int
 		err                   error
 	}{
-		{"NoMarkers_NoSig", validInput, nil, nil, nil, nil},
-		{"EndOfSequencingOnly", validInputWithEndOfSequencingMarker, &wantEOS, nil, nil, nil},
-		{"ForcedInclusionOnly", validInputWithIsForcedInclusionMarker, nil, &isForcedInclusion, nil, nil},
-		{"BothMarkers_NoSig", validInputWithBothMarkers, &wantEOS, &isForcedInclusion, nil, nil},
-		{"PrePopulatedSignature", validInputWithSignature, nil, nil, &dummySig, nil},
-		{"MissingExecutionPayload", missingExecutionPayload, nil, nil, nil, ErrMissingData},
+		{"NoMarkers_NoSig", validInput, nil, nil, nil, nil, nil},
+		{"EndOfSequencingOnly", validInputWithEndOfSequencingMarker, &wantEOS, nil, nil, nil, nil},
+		{"ForcedInclusionOnly", validInputWithIsForcedInclusionMarker, nil, &isForcedInclusion, nil, nil, nil},
+		{"BothMarkers_NoSig", validInputWithBothMarkers, &wantEOS, &isForcedInclusion, nil, nil, nil},
+		{"PrePopulatedSignature", validInputWithSignature, nil, nil, &dummySig, nil, nil},
+		{"HeaderDifficultyOnly", validInputWithHeaderDifficulty, nil, nil, nil, headerDifficulty, nil},
+		{"HeaderDifficultyAndSig", validInputWithHeaderDifficultyAndSig, &wantEOS, &isForcedInclusion, &dummySig, headerDifficulty, nil},
+		{"ZeroHeaderDifficultyOmitted", validInputWithZeroDifficulty, nil, nil, nil, nil, nil},
+		{"MissingExecutionPayload", missingExecutionPayload, nil, nil, nil, nil, ErrMissingData},
 	}
 
 	for _, tc := range tests {
@@ -533,6 +568,14 @@ func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 
 			// signature round-trip
 			assert.Equal(t, tc.wantSignature, output.Signature)
+
+			// CHANGE(taiko): HeaderDifficulty round-trip; zero/nil both decode as nil.
+			if tc.wantHeaderDifficulty == nil {
+				assert.Nil(t, output.HeaderDifficulty)
+			} else {
+				require.NotNil(t, output.HeaderDifficulty)
+				assert.Zero(t, tc.wantHeaderDifficulty.Cmp(output.HeaderDifficulty))
+			}
 		})
 	}
 }
@@ -540,5 +583,5 @@ func TestMarshalUnmarshalExecutionPayloadEnvelopes(t *testing.T) {
 func TestFailsToDeserializeTooLittleData(t *testing.T) {
 	var payload ExecutionPayloadEnvelope
 	err := payload.UnmarshalSSZ(1, bytes.NewReader([]byte{0x00}))
-	assert.Equal(t, err, errors.New("scope too small to decode execution payload envelope: 1"))
+	assert.EqualError(t, err, "scope (1) smaller than header size (34)")
 }

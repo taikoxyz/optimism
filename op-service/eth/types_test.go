@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"math/big"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -72,6 +73,53 @@ func FuzzEncodeScalar(f *testing.F) {
 		require.NoError(t, err)
 		require.Equal(t, blobBaseFeeScalar, scalars.BlobBaseFeeScalar)
 		require.Equal(t, baseFeeScalar, scalars.BaseFeeScalar)
+	})
+}
+
+// CHANGE(taiko): regression test that CheckBlockHash round-trips HeaderDifficulty.
+func TestCheckBlockHashWithHeaderDifficulty(t *testing.T) {
+	makeEnvelope := func(diff *big.Int) *ExecutionPayloadEnvelope {
+		return &ExecutionPayloadEnvelope{
+			HeaderDifficulty: diff,
+			ExecutionPayload: &ExecutionPayload{
+				ParentHash:    common.HexToHash("0x1111"),
+				FeeRecipient:  common.HexToAddress("0x2222"),
+				StateRoot:     Bytes32(common.HexToHash("0x3333")),
+				ReceiptsRoot:  Bytes32(common.HexToHash("0x4444")),
+				PrevRandao:    Bytes32(common.HexToHash("0x5555")),
+				BlockNumber:   42,
+				GasLimit:      30_000_000,
+				GasUsed:       21_000,
+				Timestamp:     1_700_000_000,
+				BaseFeePerGas: Uint256Quantity{},
+				Transactions:  []Data{},
+			},
+		}
+	}
+
+	t.Run("non-zero HeaderDifficulty round-trips", func(t *testing.T) {
+		env := makeEnvelope(big.NewInt(123_456_789))
+		env.ExecutionPayload.BlockHash, _ = env.CheckBlockHash()
+
+		_, ok := env.CheckBlockHash()
+		require.True(t, ok, "CheckBlockHash must succeed for envelope with non-zero HeaderDifficulty")
+	})
+
+	t.Run("nil HeaderDifficulty still validates", func(t *testing.T) {
+		env := makeEnvelope(nil)
+		env.ExecutionPayload.BlockHash, _ = env.CheckBlockHash()
+
+		_, ok := env.CheckBlockHash()
+		require.True(t, ok)
+	})
+
+	t.Run("HeaderDifficulty contributes to hash", func(t *testing.T) {
+		env := makeEnvelope(big.NewInt(123_456_789))
+		env.ExecutionPayload.BlockHash, _ = env.CheckBlockHash()
+
+		env.HeaderDifficulty = big.NewInt(987_654_321)
+		_, ok := env.CheckBlockHash()
+		require.False(t, ok, "changing HeaderDifficulty must invalidate the stored block hash")
 	})
 }
 
